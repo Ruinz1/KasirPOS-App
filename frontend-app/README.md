@@ -1,73 +1,105 @@
-# Welcome to your Lovable project
+# KedaiPOS - Frontend Application
 
-## Project info
+Frontend aplikasi Point of Sale (POS) modern yang dibangun dengan React, TypeScript, dan Vite.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## 🚀 Tech Stack
 
-## How can I edit this code?
+- **React 18** - UI Library
+- **TypeScript** - Type Safety
+- **Vite** - Build Tool & Dev Server
+- **TanStack Query** - Data Fetching & Caching
+- **Zustand** - State Management
+- **Radix UI** - Headless UI Components
+- **Tailwind CSS** - Styling
+- **Recharts** - Data Visualization
 
-There are several ways of editing your application.
+## 📋 Prerequisites
 
-**Use Lovable**
+- **Node.js** 18+ dan npm
+- Backend API harus sudah berjalan di `http://localhost:8000`
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## 🔧 Installation
 
-Changes made via Lovable will be committed automatically to this repo.
+```bash
+# Install dependencies
+npm install
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Frontend akan berjalan di `http://localhost:5173`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 🌐 Environment Configuration
 
-**Use GitHub Codespaces**
+Buat file `.env` di root folder `frontend-app/`:
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```env
+VITE_API_URL=http://localhost:8000
+```
 
-## What technologies are used for this project?
+## 📦 Build for Production
 
-This project is built with:
+```bash
+# Build production bundle
+npm run build
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+# Preview production build
+npm run preview
+```
 
-## How can I deploy this project?
+Output akan ada di folder `dist/`
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+## 📁 Project Structure
 
-## Can I connect a custom domain to my Lovable project?
+```
+frontend-app/
+├── src/
+│   ├── components/       # Reusable components
+│   │   ├── layout/      # Layout components (Sidebar, Navbar)
+│   │   └── ui/          # UI components (Button, Card, etc)
+│   ├── pages/           # Page components
+│   │   ├── POSPage.tsx
+│   │   ├── Dashboard.tsx
+│   │   ├── InventoryPage.tsx
+│   │   ├── MenuPage.tsx
+│   │   ├── EmployeesPage.tsx
+│   │   ├── ReportsPage.tsx
+│   │   ├── CapitalPage.tsx
+│   │   └── StorePage.tsx
+│   ├── store/           # Zustand state management
+│   ├── hooks/           # Custom React hooks
+│   ├── utils/           # Utility functions
+│   ├── App.tsx          # Main app component
+│   └── main.tsx         # Entry point
+├── public/              # Static assets
+└── package.json
+```
 
-Yes, you can!
+## 🎯 Main Features
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+- **POS Interface** - User-friendly kasir dengan order type (Dine In/Take Away)
+- **Dashboard** - Analytics dan sales trend visualization
+- **Inventory Management** - Stock tracking dan damaged equipment handling
+- **Menu Management** - CRUD menu items dengan category
+- **Employee Management** - Role-based access dan salary tracking
+- **Capital & Finance** - Profit/loss calculation dan financial reports
+- **Reports** - Transaction history dan receipt printing
+- **Multi-Store** - Multiple store management
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## 🔗 API Integration
+
+Frontend berkomunikasi dengan backend Laravel melalui REST API. Pastikan backend sudah berjalan sebelum menjalankan frontend.
+
+Default API URL: `http://localhost:8000`
+
+## 📝 Development Notes
+
+- Gunakan `npm run dev` untuk development dengan hot-reload
+- Semua API calls menggunakan TanStack Query untuk caching dan state management
+- State global dikelola dengan Zustand
+- Styling menggunakan Tailwind CSS dengan custom components
+
+---
+
+**Catatan**: Untuk dokumentasi lengkap proyek, lihat README.md di root folder `POS-APP/`
