@@ -126,27 +126,12 @@ export default function Dashboard() {
       const todayParams = { ...baseParams, start_date: today, end_date: today };
       const monthParams = { ...baseParams, start_date: firstDayOfMonth, end_date: today };
 
-      // Parallel requests
-      const promises = [
+      // Parallel requests for orders
+      const [todayStats, monthStats, ordersRes] = await Promise.all([
         api.get('/orders/report/sales', { params: todayParams }),
         api.get('/orders/report/sales', { params: monthParams }),
         api.get('/orders', { params: { ...todayParams, limit: 5 } }),
-      ];
-
-      // Inventory & Employees (Admin/Owner only)
-      if (canEdit()) {
-        promises.push(
-          api.get('/inventory', { params: { ...baseParams, type: 'stock' } }),
-          api.get('/employees', { params: { ...baseParams, role: 'karyawan' } }) // Only count Karyawan role
-        );
-      } else {
-        promises.push(
-          Promise.resolve({ data: [] } as any),
-          Promise.resolve({ data: [] } as any)
-        );
-      }
-
-      const [todayStats, monthStats, ordersRes, inventoryRes, empRes] = await Promise.all(promises);
+      ]);
 
       const dashStats: DashboardStats = {
         total_orders_today: todayStats.data.total_orders,
@@ -165,13 +150,39 @@ export default function Dashboard() {
 
       setRecentOrders(ordersRes.data.slice(0, 5));
 
+      // Fetch Inventory & Employees separately for better error handling
       if (canEdit()) {
-        const lowStock = inventoryRes.data.filter((item: any) => item.is_low_stock);
-        setLowStockItems(lowStock);
-        dashStats.low_stock_items = lowStock.length;
-        dashStats.total_employees = empRes.data.length;
+        try {
+          const inventoryRes = await api.get('/inventory', { params: { ...baseParams, type: 'stock' } });
+          const lowStock = inventoryRes.data.filter((item: any) => item.is_low_stock);
+          setLowStockItems(lowStock);
+          dashStats.low_stock_items = lowStock.length;
+        } catch (error) {
+          console.error('Failed to fetch inventory:', error);
+        }
+
+        try {
+          const empRes = await api.get('/employees', { params: baseParams });
+          console.log('Employee API Response:', empRes.data);
+          console.log('Employee Response Type:', typeof empRes.data, Array.isArray(empRes.data));
+          console.log('Employee Count:', empRes.data?.length || 0);
+          console.log('Base Params:', baseParams);
+
+          // Ensure empRes.data is an array
+          if (Array.isArray(empRes.data)) {
+            dashStats.total_employees = empRes.data.length;
+          } else {
+            console.warn('Employee response is not an array:', empRes.data);
+            dashStats.total_employees = 0;
+          }
+        } catch (error) {
+          console.error('Failed to fetch employees:', error);
+          dashStats.total_employees = 0;
+        }
       }
 
+      // Set stats AFTER all data is fetched
+      console.log('Final dashStats:', dashStats);
       setStats(dashStats);
 
       // --- Chart Data Processing ---

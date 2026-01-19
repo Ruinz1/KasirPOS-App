@@ -29,12 +29,12 @@ php artisan key:generate
 
 # Configure database di .env file
 # Untuk SQLite (default):
-# DB_CONNECTION=sqlite
+# DB_CONNECTION=sqlite / mysql
 # Untuk MySQL:
 # DB_CONNECTION=mysql
 # DB_HOST=127.0.0.1
 # DB_PORT=3306
-# DB_DATABASE=kedaipos
+# DB_DATABASE=kedai_pos
 # DB_USERNAME=root
 # DB_PASSWORD=
 
@@ -62,14 +62,12 @@ APP_DEBUG=true
 APP_URL=http://localhost:8000
 
 # Database Configuration
-DB_CONNECTION=sqlite
-# atau untuk MySQL:
-# DB_CONNECTION=mysql
-# DB_HOST=127.0.0.1
-# DB_PORT=3306
-# DB_DATABASE=kedaipos
-# DB_USERNAME=root
-# DB_PASSWORD=
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=kedai_pos
+DB_USERNAME=root
+DB_PASSWORD=
 
 # Session & Cache
 SESSION_DRIVER=database

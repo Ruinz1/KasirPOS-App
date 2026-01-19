@@ -11,8 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
+        Schema::table('menu_items', function (Blueprint $table) {
+            $table->decimal('discount_percentage', 5, 2)->default(0)->after('price');
+        });
+        
         Schema::table('orders', function (Blueprint $table) {
-            //
+            // Already has discount and tax columns from previous implementation
         });
     }
 
@@ -21,6 +25,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        Schema::table('menu_items', function (Blueprint $table) {
+            $table->dropColumn('discount_percentage');
+        });
+        
         Schema::table('orders', function (Blueprint $table) {
             //
         });

@@ -55,6 +55,7 @@ class MenuController extends Controller
             'name' => 'required|string|max:255',
             'category' => 'required|string|max:255',
             'price' => 'required|numeric|min:0',
+            'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'image' => 'nullable|string',
             'ingredients' => 'required|array|min:1',
             'ingredients.*.inventory_item_id' => 'required|exists:inventory_items,id',
@@ -73,6 +74,7 @@ class MenuController extends Controller
                 'name' => $validated['name'],
                 'category' => $validated['category'],
                 'price' => $validated['price'],
+                'discount_percentage' => $validated['discount_percentage'] ?? 0,
                 'image' => $validated['image'] ?? null,
                 'store_id' => $validated['store_id'] ?? null,
             ]);
@@ -120,6 +122,7 @@ class MenuController extends Controller
             'name' => 'sometimes|string|max:255',
             'category' => 'sometimes|string|max:255',
             'price' => 'sometimes|numeric|min:0',
+            'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'image' => 'nullable|string',
             'ingredients' => 'sometimes|array',
             'ingredients.*.inventory_item_id' => 'required|exists:inventory_items,id',
@@ -132,6 +135,7 @@ class MenuController extends Controller
                 'name' => $validated['name'] ?? $menuItem->name,
                 'category' => $validated['category'] ?? $menuItem->category,
                 'price' => $validated['price'] ?? $menuItem->price,
+                'discount_percentage' => $validated['discount_percentage'] ?? $menuItem->discount_percentage,
                 'image' => $validated['image'] ?? $menuItem->image,
             ]);
 

@@ -27,6 +27,7 @@ interface MenuItem {
   name: string;
   category: string;
   price: number;
+  discount_percentage?: number;
   cogs?: number;
   menu_ingredients?: Array<{
     inventory_item: {
@@ -198,7 +199,15 @@ export default function POSPage() {
     setPaidAmount('');
   };
 
-  const cartTotal = cart.reduce((sum, item) => sum + (item.menuItem.price * item.quantity), 0);
+  // Helper function to get discounted price
+  const getDiscountedPrice = (item: MenuItem) => {
+    if (item.discount_percentage && item.discount_percentage > 0) {
+      return item.price * (1 - item.discount_percentage / 100);
+    }
+    return item.price;
+  };
+
+  const cartTotal = cart.reduce((sum, item) => sum + (getDiscountedPrice(item.menuItem) * item.quantity), 0);
   const cartCogs = cart.reduce((sum, item) => sum + ((item.menuItem.cogs || 0) * item.quantity), 0);
   const cartProfit = cartTotal - cartCogs;
 
@@ -378,7 +387,18 @@ export default function POSPage() {
                           </div>
                           <h3 className="font-medium text-sm line-clamp-2">{item.name}</h3>
                           <p className="text-xs text-muted-foreground mt-1">{item.category}</p>
-                          <p className="font-bold mt-2">{formatCurrency(item.price)}</p>
+
+                          {item.discount_percentage && item.discount_percentage > 0 ? (
+                            <div className="mt-2">
+                              <div className="flex items-center gap-1 mb-1">
+                                <span className="text-xs line-through text-muted-foreground">{formatCurrency(item.price)}</span>
+                                <span className="px-1 py-0.5 bg-destructive/10 text-destructive text-[10px] font-semibold rounded">-{item.discount_percentage}%</span>
+                              </div>
+                              <p className="font-bold text-destructive">{formatCurrency(getDiscountedPrice(item))}</p>
+                            </div>
+                          ) : (
+                            <p className="font-bold mt-2">{formatCurrency(item.price)}</p>
+                          )}
 
                           {inCart && (
                             <div className="absolute top-2 right-2 w-6 h-6 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-bold">
@@ -427,9 +447,19 @@ export default function POSPage() {
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex-1">
                       <h4 className="font-medium text-sm">{item.menuItem.name}</h4>
-                      <p className="text-sm text-muted-foreground">
-                        {formatCurrency(item.menuItem.price)}
-                      </p>
+                      {item.menuItem.discount_percentage && item.menuItem.discount_percentage > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs line-through text-muted-foreground">{formatCurrency(item.menuItem.price)}</span>
+                          <span className="text-sm text-destructive font-semibold">
+                            {formatCurrency(getDiscountedPrice(item.menuItem))}
+                          </span>
+                          <span className="px-1.5 py-0.5 bg-destructive/10 text-destructive text-[10px] font-semibold rounded">-{item.menuItem.discount_percentage}%</span>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          {formatCurrency(item.menuItem.price)}
+                        </p>
+                      )}
                     </div>
                     <button
                       className="p-1 hover:bg-destructive/10 rounded"
@@ -455,7 +485,7 @@ export default function POSPage() {
                       </button>
                     </div>
                     <span className="font-semibold">
-                      {formatCurrency(item.menuItem.price * item.quantity)}
+                      {formatCurrency(getDiscountedPrice(item.menuItem) * item.quantity)}
                     </span>
                   </div>
                 </div>

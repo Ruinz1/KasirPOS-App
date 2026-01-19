@@ -15,12 +15,14 @@ class MenuItem extends Model
         'name',
         'category',
         'price',
+        'discount_percentage',
         'image',
         'store_id',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
+        'discount_percentage' => 'decimal:2',
     ];
 
     /**
@@ -50,6 +52,29 @@ class MenuItem extends Model
     }
 
     /**
+     * Calculate discounted price
+     */
+    public function getDiscountedPrice(): float
+    {
+        if ($this->discount_percentage > 0) {
+            $discountAmount = ($this->price * $this->discount_percentage) / 100;
+            return $this->price - $discountAmount;
+        }
+        return $this->price;
+    }
+
+    /**
+     * Calculate discount amount
+     */
+    public function getDiscountAmount(): float
+    {
+        if ($this->discount_percentage > 0) {
+            return ($this->price * $this->discount_percentage) / 100;
+        }
+        return 0;
+    }
+
+    /**
      * Calculate COGS (Cost of Goods Sold) for this menu item
      */
     public function calculateCOGS(): float
@@ -67,21 +92,22 @@ class MenuItem extends Model
     }
 
     /**
-     * Calculate profit per unit
+     * Calculate profit per unit (after discount)
      */
     public function calculateProfit(): float
     {
-        return $this->price - $this->calculateCOGS();
+        return $this->getDiscountedPrice() - $this->calculateCOGS();
     }
 
     /**
-     * Calculate profit margin percentage
+     * Calculate profit margin percentage (after discount)
      */
     public function calculateMargin(): float
     {
-        if ($this->price == 0) {
+        $discountedPrice = $this->getDiscountedPrice();
+        if ($discountedPrice == 0) {
             return 0;
         }
-        return ($this->calculateProfit() / $this->price) * 100;
+        return ($this->calculateProfit() / $discountedPrice) * 100;
     }
 }

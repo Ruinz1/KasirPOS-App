@@ -117,12 +117,14 @@ class OrderController extends Controller
                     }
                 }
 
-                // Create order item
+                // Create order item with discounted price
+                $discountedPrice = $menuItem->getDiscountedPrice();
+                
                 OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $menuItem->id,
                     'quantity' => $item['quantity'],
-                    'price' => $menuItem->price,
+                    'price' => $discountedPrice, // Use discounted price
                 ]);
 
                 // Reduce stock
@@ -134,8 +136,8 @@ class OrderController extends Controller
                     }
                 }
 
-                // Calculate totals
-                $itemTotal = $menuItem->price * $item['quantity'];
+                // Calculate totals using discounted price
+                $itemTotal = $discountedPrice * $item['quantity'];
                 $itemCogs = $menuItem->calculateCOGS() * $item['quantity'];
                 
                 $total += $itemTotal;

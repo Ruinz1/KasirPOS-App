@@ -20,13 +20,25 @@ class EmployeeController extends Controller
 
         $query = User::with('store')->orderBy('created_at', 'desc');
 
-        // Admin can filter by store_id
-        if ($request->has('store_id') && $request->user()->role === 'admin') {
-            $query->where('store_id', $request->store_id);
+        // Owner: Only see karyawan from their own store
+        if ($request->user()->role === 'owner') {
+            $query->where('store_id', $request->user()->store_id)
+                  ->where('role', 'karyawan'); // Only count karyawan role
         }
 
-        // Filter by role if provided (e.g. ?role=karyawan)
-        if ($request->has('role')) {
+        // Admin: Can filter by store_id or see all
+        if ($request->user()->role === 'admin') {
+            if ($request->has('store_id') && $request->store_id !== 'all') {
+                $query->where('store_id', $request->store_id);
+            }
+            // For admin, also filter by karyawan role by default unless specified
+            if (!$request->has('role')) {
+                $query->where('role', 'karyawan');
+            }
+        }
+
+        // Filter by role if provided (e.g. ?role=karyawan) - only for admin
+        if ($request->has('role') && $request->user()->role === 'admin') {
             $query->where('role', $request->role);
         }
 

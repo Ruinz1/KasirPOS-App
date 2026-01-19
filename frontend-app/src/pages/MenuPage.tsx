@@ -35,6 +35,7 @@ interface MenuItem {
   name: string;
   category: string;
   price: number;
+  discount_percentage?: number;
   image?: string;
   cogs?: number;
   profit?: number;
@@ -68,6 +69,7 @@ export default function MenuPage() {
     name: '',
     category: 'Kopi',
     price: '',
+    discount_percentage: '0',
     store_id: '',
   });
 
@@ -153,6 +155,7 @@ export default function MenuPage() {
         name: formData.name,
         category: formData.category,
         price: parseFloat(formData.price),
+        discount_percentage: parseFloat(formData.discount_percentage) || 0,
         ingredients: ingredients,
       };
 
@@ -185,6 +188,7 @@ export default function MenuPage() {
       name: item.name,
       category: item.category,
       price: item.price.toString(),
+      discount_percentage: (item.discount_percentage || 0).toString(),
       store_id: selectedStoreId // Ideally we should get store_id from item if available, but Menu API doesn't return it explicitly yet? Check controller. It returns MenuItem model. Model has store_id. But frontend interface doesn't have it.
       // If we are in "All Stores" mode, editing an item needs to know its store.
     });
@@ -217,7 +221,7 @@ export default function MenuPage() {
   };
 
   const resetForm = () => {
-    setFormData({ name: '', category: 'Kopi', price: '', store_id: isAdmin() ? selectedStoreId : '' });
+    setFormData({ name: '', category: 'Kopi', price: '', discount_percentage: '0', store_id: isAdmin() ? selectedStoreId : '' });
     setIngredients([]);
     setNewIngredient({ inventory_item_id: 0, amount: '' });
     setEditingItem(null);
@@ -360,6 +364,24 @@ export default function MenuPage() {
                       </div>
                     </div>
 
+                    <div>
+                      <Label>Discount (%)</Label>
+                      <Input
+                        className="input-coffee mt-1"
+                        type="number"
+                        min="0"
+                        max="100"
+                        placeholder="0"
+                        value={formData.discount_percentage}
+                        onChange={(e) => setFormData({ ...formData, discount_percentage: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Harga setelah discount: {formData.price && formData.discount_percentage ?
+                          formatCurrency(parseFloat(formData.price) * (1 - parseFloat(formData.discount_percentage) / 100)) :
+                          formatCurrency(parseFloat(formData.price) || 0)}
+                      </p>
+                    </div>
+
                     <div className="p-4 bg-secondary/30 rounded-lg space-y-3">
                       <div className="flex justify-between items-center">
                         <Label>Resep & Bahan</Label>
@@ -467,11 +489,29 @@ export default function MenuPage() {
                 )}
               </div>
 
-              <h3 className="font-display font-semibold text-lg">{item.name}</h3>
+              <div className="flex items-start justify-between mb-2">
+                <h3 className="font-display font-semibold text-lg">{item.name}</h3>
+                {item.discount_percentage && item.discount_percentage > 0 && (
+                  <span className="px-2 py-1 bg-destructive/10 text-destructive text-xs font-semibold rounded">
+                    -{item.discount_percentage}%
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground mb-3">{item.category}</p>
 
               <div className="flex justify-between items-center mb-3">
-                <span className="text-xl font-bold">{formatCurrency(item.price)}</span>
+                <div className="flex flex-col">
+                  {item.discount_percentage && item.discount_percentage > 0 ? (
+                    <>
+                      <span className="text-sm text-muted-foreground line-through">{formatCurrency(item.price)}</span>
+                      <span className="text-xl font-bold text-destructive">
+                        {formatCurrency(item.price * (1 - item.discount_percentage / 100))}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-xl font-bold">{formatCurrency(item.price)}</span>
+                  )}
+                </div>
                 <span className={`text-sm font-medium ${(item.margin || 0) >= 60 ? 'text-success' : 'text-warning'}`}>
                   {item.margin?.toFixed(0)}% margin
                 </span>
