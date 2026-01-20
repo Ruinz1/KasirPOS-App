@@ -320,6 +320,7 @@ Aplikasi ini mendukung thermal printer 58mm untuk mencetak receipt.
 ## 👨‍💻 Developer
 
 Muamar Farhan 
+
 [![Instagram](https://img.shields.io/badge/Instagram-%23E4405F.svg?style=for-the-badge&logo=Instagram&logoColor=white)](https://www.instagram.com/_muamarfarhan_/)
 
 ---
