@@ -317,13 +317,10 @@ Aplikasi ini mendukung thermal printer 58mm untuk mencetak receipt.
 4. Push to branch (`git push origin feature/AmazingFeature`)
 5. Open Pull Request
 
-## 📝 License
-
-This project is licensed under the MIT License.
-
 ## 👨‍💻 Developer
 
-Developed with ❤️ for modern retail businesses
+Muamar Farhan 
+[![Instagram](https://img.shields.io/badge/Instagram-%23E4405F.svg?style=for-the-badge&logo=Instagram&logoColor=white)](https://www.instagram.com/_muamarfarhan_/)
 
 ---
 
