@@ -12,10 +12,15 @@ class OrderItem extends Model
         'menu_item_id',
         'quantity',
         'price',
+        'note',
+        'is_takeaway',
+        'is_addon',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
+        'is_takeaway' => 'boolean',
+        'is_addon' => 'boolean',
     ];
 
     /**

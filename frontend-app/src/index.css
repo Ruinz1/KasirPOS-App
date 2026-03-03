@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
 
 @layer base {
   :root {
@@ -292,4 +292,20 @@
       transform: scale(1);
     }
   }
+}
+
+/* SweetAlert2 Z-Index and Pointer Events Fix for Modal Compatibility */
+body.swal2-shown > [aria-hidden="true"] {
+  transition: 0.1s opacity;
+  opacity: 0.3; /* Optional: dim standard content slightly more */
+}
+
+.swal2-container {
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+}
+
+/* Ensure buttons inside swal are clickable */
+.swal2-actions {
+  z-index: 999999;
 }

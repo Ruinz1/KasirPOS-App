@@ -15,16 +15,31 @@ class Order extends Model
     protected $fillable = [
         'user_id',
         'customer_name',
+        'customer_notes',
         'total',
         'cogs',
         'profit',
         'payment_method',
-        'order_type',
+        'second_payment_method',
         'paid_amount',
+        'second_paid_amount',
+        'payment_status',
+        'order_type',
+        'payment_proof',
         'change_amount',
+        'initial_cash',
         'daily_number',
         'status',
+        'queue_status',
+        'drink_queue_status',
+        'notes',
+        'queue_completed_at',
         'store_id',
+        'table_id',
+    ];
+
+    protected $casts = [
+        'payment_proof' => 'array',
     ];
 
     /**
@@ -49,6 +64,14 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    /**
+     * Get the table assigned to this order
+     */
+    public function table(): BelongsTo
+    {
+        return $this->belongsTo(Table::class);
     }
 
     /**

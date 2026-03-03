@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { toast } from 'sonner';
 
 interface InventoryItem {
@@ -42,8 +43,13 @@ interface Store {
   name: string;
 }
 
-const categories = ['Kopi', 'Susu', 'Pemanis', 'Topping', 'Es', 'Teh', 'Sirup', 'Alat Kopi', 'Alat Pendingin', 'Lainnya'];
-const units = ['gram', 'ml', 'pcs', 'kg', 'liter'];
+// Kategori untuk Bahan (Stock)
+const stockCategories = ['Kopi', 'Susu', 'Pemanis', 'Topping', 'Es', 'Teh', 'Sirup', 'Bumbu', 'Bahan Makanan', 'Lainnya'];
+
+// Kategori untuk Alat (Equipment)
+const equipmentCategories = ['Alat Kopi', 'Alat Pendingin', 'Alat Makan', 'Alat Masak', 'Alat Kebersihan', 'Furniture', 'Elektronik', 'Lainnya'];
+
+const units = ['gram', 'ml', 'pcs', 'kg', 'liter', 'dus', '-'];
 
 export default function InventoryPage() {
   const { user, hasPermission, loading: authLoading, isAdmin } = useAuth();
@@ -53,6 +59,7 @@ export default function InventoryPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const [priceInputMode, setPriceInputMode] = useState<'total' | 'unit'>('total');
 
   // Store management for admin
   const [stores, setStores] = useState<Store[]>([]);
@@ -128,23 +135,43 @@ export default function InventoryPage() {
 
   const handleSubmit = async () => {
     try {
+      // Basic validation
+      if (!formData.name) {
+        toast.error('Nama item harus diisi');
+        return;
+      }
+
+      if (formData.type === 'stock') {
+        if (!formData.current_stock || isNaN(parseFloat(formData.current_stock))) {
+          toast.error('Stock awal harus diisi dengan angka');
+          return;
+        }
+        if (!formData.total_price || isNaN(parseFloat(formData.total_price))) {
+          toast.error('Harga total harus diisi dengan angka');
+          return;
+        }
+      } else {
+        if (!formData.total_price || isNaN(parseFloat(formData.total_price))) {
+          toast.error('Harga alat harus diisi dengan angka');
+          return;
+        }
+      }
+
       const payload: any = {
         name: formData.name,
         type: formData.type,
         category: formData.category,
-        total_price: parseFloat(formData.total_price), // Always send total_price
+        total_price: parseFloat(formData.total_price),
       };
 
       // Handle store_id based on user role
       if (isAdmin()) {
-        // Admin must select a store
         if (!formData.store_id) {
           toast.error('Pilih toko terlebih dahulu');
           return;
         }
         payload.store_id = formData.store_id;
       } else {
-        // Owner/Karyawan: use their own store_id automatically
         if (user?.store_id) {
           payload.store_id = user.store_id;
         }
@@ -153,16 +180,11 @@ export default function InventoryPage() {
       if (formData.type === 'stock') {
         payload.current_stock = parseFloat(formData.current_stock);
         payload.unit = formData.unit;
-        payload.min_stock = parseFloat(formData.min_stock);
+        payload.min_stock = formData.min_stock ? parseFloat(formData.min_stock) : 0;
         // price_per_unit will be calculated automatically by backend
       } else {
-        // Equipment: add status and description
-        if (formData.status) {
-          payload.status = formData.status;
-        }
-        if (formData.description) {
-          payload.description = formData.description;
-        }
+        if (formData.status) payload.status = formData.status;
+        if (formData.description) payload.description = formData.description;
       }
 
       if (editingItem) {
@@ -197,6 +219,7 @@ export default function InventoryPage() {
     });
     setEditingItem(item);
     setIsAddDialogOpen(true);
+    setPriceInputMode('total');
   };
 
   const handleDelete = async (id: number) => {
@@ -228,20 +251,50 @@ export default function InventoryPage() {
     });
     setEditingItem(null);
     setIsAddDialogOpen(false);
+    setPriceInputMode('total');
+  };
+
+  // State handlers to ensure consistent updates
+  const handleStockChange = (stock: string) => {
+    const newState = { ...formData, current_stock: stock };
+    const stockVal = parseFloat(stock);
+
+    if (stock && stockVal > 0) {
+      if (priceInputMode === 'total' && formData.total_price) {
+        // Calculate price per unit
+        const pricePerUnit = parseFloat(formData.total_price) / stockVal;
+        newState.price_per_unit = pricePerUnit.toFixed(2);
+      } else if (priceInputMode === 'unit' && formData.price_per_unit) {
+        // Calculate total price
+        const totalPrice = parseFloat(formData.price_per_unit) * stockVal;
+        newState.total_price = Math.round(totalPrice).toString();
+      }
+    }
+
+    setFormData(newState);
   };
 
   // Calculate price per unit when total price changes (for stock)
   const handleTotalPriceChange = (totalPrice: string) => {
-    setFormData({ ...formData, total_price: totalPrice });
+    const newState = { ...formData, total_price: totalPrice };
 
-    if (formData.type === 'stock' && formData.current_stock && totalPrice) {
+    if (formData.current_stock && parseFloat(formData.current_stock) > 0 && totalPrice) {
       const pricePerUnit = parseFloat(totalPrice) / parseFloat(formData.current_stock);
-      setFormData(prev => ({
-        ...prev,
-        total_price: totalPrice,
-        price_per_unit: pricePerUnit.toFixed(2)
-      }));
+      newState.price_per_unit = pricePerUnit.toFixed(2);
     }
+
+    setFormData(newState);
+  };
+
+  const handleUnitPriceChange = (unitPrice: string) => {
+    const newState = { ...formData, price_per_unit: unitPrice };
+
+    if (formData.current_stock && parseFloat(formData.current_stock) > 0 && unitPrice) {
+      const totalPrice = parseFloat(unitPrice) * parseFloat(formData.current_stock);
+      newState.total_price = Math.round(totalPrice).toString();
+    }
+
+    setFormData(newState);
   };
 
   const getStockStatusBadge = (status?: string) => {
@@ -320,7 +373,7 @@ export default function InventoryPage() {
               <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                 <DialogTrigger asChild>
                   <Button
-                    className="bg-[#5C4033] hover:bg-[#4A332A] text-[#F5F5Fdc] border-none"
+                    className="btn-primary"
                     onClick={() => {
                       resetForm();
                       if (isAdmin() && selectedStoreId && selectedStoreId !== 'all') {
@@ -375,7 +428,11 @@ export default function InventoryPage() {
                         <Label>Tipe</Label>
                         <Select
                           value={formData.type}
-                          onValueChange={(v: 'stock' | 'equipment') => setFormData({ ...formData, type: v })}
+                          onValueChange={(v: 'stock' | 'equipment') => {
+                            // Update type and set default category based on type
+                            const defaultCategory = v === 'stock' ? stockCategories[0] : equipmentCategories[0];
+                            setFormData({ ...formData, type: v, category: defaultCategory });
+                          }}
                         >
                           <SelectTrigger className="mt-1">
                             <SelectValue />
@@ -397,7 +454,7 @@ export default function InventoryPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {categories.map((cat) => (
+                            {(formData.type === 'stock' ? stockCategories : equipmentCategories).map((cat) => (
                               <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                             ))}
                           </SelectContent>
@@ -415,7 +472,7 @@ export default function InventoryPage() {
                               type="number"
                               placeholder="1000"
                               value={formData.current_stock}
-                              onChange={(e) => setFormData({ ...formData, current_stock: e.target.value })}
+                              onChange={(e) => handleStockChange(e.target.value)}
                             />
                           </div>
                           <div>
@@ -436,18 +493,52 @@ export default function InventoryPage() {
                           </div>
                         </div>
 
-                        <div>
-                          <Label>Harga Total (Rp)</Label>
-                          <Input
-                            className="input-coffee mt-1"
-                            type="number"
-                            placeholder="100000"
-                            value={formData.total_price}
-                            onChange={(e) => handleTotalPriceChange(e.target.value)}
-                          />
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Harga per {formData.unit}: {formData.price_per_unit ? formatCurrency(parseFloat(formData.price_per_unit)) : '-'}
-                          </p>
+                        <div className="col-span-2">
+                          <Label className="mb-2 block">Mode Input Harga</Label>
+                          <RadioGroup
+                            defaultValue="total"
+                            value={priceInputMode}
+                            onValueChange={(v) => {
+                              setPriceInputMode(v as 'total' | 'unit');
+                              // Recalculate based on new mode if needed?
+                              // Actually, keeping values as is is fine, user will edit the active field.
+                            }}
+                            className="flex gap-4"
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="total" id="mode-total" />
+                              <Label htmlFor="mode-total" className="font-normal cursor-pointer">Harga Total</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="unit" id="mode-unit" />
+                              <Label htmlFor="mode-unit" className="font-normal cursor-pointer">Harga Per Satuan</Label>
+                            </div>
+                          </RadioGroup>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label>Harga Total (Rp)</Label>
+                            <Input
+                              className={`input-coffee mt-1 ${priceInputMode === 'unit' ? 'bg-muted opacity-70' : ''}`}
+                              type="number"
+                              placeholder="100000"
+                              value={formData.total_price}
+                              onChange={(e) => handleTotalPriceChange(e.target.value)}
+                              readOnly={priceInputMode === 'unit'}
+                            />
+                          </div>
+                          <div>
+                            <Label>Harga Per {formData.unit || 'Unit'} (Rp)</Label>
+                            <Input
+                              className={`input-coffee mt-1 ${priceInputMode === 'total' ? 'bg-muted opacity-70' : ''}`}
+                              type="number"
+                              placeholder="1000"
+                              value={formData.price_per_unit}
+                              onChange={(e) => handleUnitPriceChange(e.target.value)}
+                              readOnly={priceInputMode === 'total'}
+                            />
+                          </div>
                         </div>
 
                         <div>
@@ -646,6 +737,6 @@ export default function InventoryPage() {
           </div>
         )}
       </div>
-    </MainLayout>
+    </MainLayout >
   );
 }

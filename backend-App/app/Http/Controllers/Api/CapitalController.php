@@ -117,11 +117,16 @@ class CapitalController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $storeId = $request->get('store_id');
+        // Determine Store ID context
+        if ($request->user()->role === 'admin') {
+            $storeId = $request->get('store_id');
+        } else {
+            $storeId = $request->user()->store_id;
+        }
         
         // Get initial capital
         $capitalQuery = CapitalRecord::query();
-        if ($storeId && $request->user()->role === 'admin') {
+        if ($storeId) {
             $capitalQuery->where('store_id', $storeId);
         }
         $initialCapital = $capitalQuery->sum('amount');
@@ -129,7 +134,7 @@ class CapitalController extends Controller
         // Get current assets (stock)
         $stockQuery = InventoryItem::stocks();
         
-        if ($storeId && $request->user()->role === 'admin') {
+        if ($storeId) {
             $stockQuery->where('store_id', $storeId);
         }
         
@@ -140,7 +145,7 @@ class CapitalController extends Controller
         // Get equipment - separate good and damaged
         $equipmentQuery = InventoryItem::equipment();
         
-        if ($storeId && $request->user()->role === 'admin') {
+        if ($storeId) {
             $equipmentQuery->where('store_id', $storeId);
         }
         
@@ -164,9 +169,9 @@ class CapitalController extends Controller
 
         // Get revenue and expenses
         $orderQuery = Order::query();
-        $userQuery = User::query();
+        $userQuery = User::query()->where('role', 'karyawan');
         
-        if ($storeId && $request->user()->role === 'admin') {
+        if ($storeId) {
             $orderQuery->where('store_id', $storeId);
             $userQuery->where('store_id', $storeId);
         }

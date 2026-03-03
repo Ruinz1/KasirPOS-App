@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { formatCurrency, formatNumber } from '@/utils/calculations';
+import { useThemeColor } from '@/hooks/use-theme-color';
 import {
   TrendingUp,
   DollarSign,
@@ -78,6 +79,7 @@ interface PopularMenuData {
 
 export default function Dashboard() {
   const { user, isKaryawan, canEdit, isAdmin } = useAuth();
+  const themeColor = useThemeColor();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
@@ -214,6 +216,9 @@ export default function Dashboard() {
         }
 
         chartOrders.forEach((o: any) => {
+          // Skip cancelled orders
+          if (o.status === 'cancelled') return;
+
           const d = new Date(o.created_at);
           const dateKey = d.toISOString().split('T')[0]; // Match by date part only
 
@@ -239,32 +244,18 @@ export default function Dashboard() {
         const menuStats: Record<string, { profit: number, sales: number }> = {};
 
         chartOrders.forEach((o: any) => {
-          o.items.forEach((item: any) => {
-            const menuName = item.menu_item.name;
-            // Calculate Item Profit: (Price - COGS) * Qty
-            // COGS might come from MenuItem relation if backend sends it.
-            // Step 1745 OrderController does loading 'items.menuItem'.
-            // MenuItem has COGS method but here we have JSON.
-            // We rely on order.profit? No, that's total.
-            // Let's APPROXIMATE item profit by prorating order profit? Or just assume margin.
-            // Let's stick to SALES VOLUME (Qty) or REVENUE for simplicity unless we have per-item cost in JSON.
-            // Actually, let's use Revenue. High revenue usually means high profit contribution for cafes.
-            // Or better: Let's assume 50% margin if unknown, just to show a "Profit" bar? No that's fake.
+          // Skip cancelled orders
+          if (o.status === 'cancelled') return;
 
-            // Checking MenuItem model (Step 1738): `calculateCOGS`. `price`.
-            // OrderController `index` loads `items.menuItem`.
-            // Does it load `menuIngredients`? No.
-            // So we don't know COGS on frontend here.
-            // We ONLY know Selling Price.
-            // I will display "Menu Populer (Omset)" - Revenue.
-            // "Menguntungkan" can be interpreted as producing most money.
+          o.items.forEach((item: any) => {
+            if (!item.menu_item) return; // Skip if menu item deleted
+            const menuName = item.menu_item.name;
 
             if (!menuStats[menuName]) {
               menuStats[menuName] = { profit: 0, sales: 0 };
             }
             const itemTotal = item.price * item.quantity;
             menuStats[menuName].sales += itemTotal;
-            // menuStats[menuName].profit += ... (Cannot accurately calc without COGS)
           });
         });
 
@@ -419,25 +410,25 @@ export default function Dashboard() {
             {/* Top Stats Row */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* PROFIT CARD - Highlighted */}
-              <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-[#5C4033] to-[#8B4513] text-white p-6 shadow-lg transform transition-all hover:scale-[1.02]">
+              <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary to-primary/80 text-primary-foreground p-6 shadow-lg transform transition-all hover:scale-[1.02]">
                 <div className="relative z-10 flex flex-col justify-between h-full">
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-white/80 text-sm font-medium">Profit Bulan Ini</p>
+                      <p className="text-primary-foreground/80 text-sm font-medium">Profit Bulan Ini</p>
                       <p className="text-3xl font-bold mt-2 font-display tracking-tight">
                         {formatCurrency(stats.total_profit_month)}
                       </p>
                     </div>
-                    <div className="p-2 rounded-lg bg-white/20 backdrop-blur-sm">
-                      <TrendingUp className="w-6 h-6 text-white" />
+                    <div className="p-2 rounded-lg bg-primary-foreground/20 backdrop-blur-sm">
+                      <TrendingUp className="w-6 h-6 text-primary-foreground" />
                     </div>
                   </div>
-                  <div className="mt-4 text-xs text-white/60">
+                  <div className="mt-4 text-xs text-primary-foreground/60">
                     Performence yang baik!
                   </div>
                 </div>
                 {/* Decor */}
-                <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-white/10 rounded-full blur-2xl"></div>
+                <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-primary-foreground/10 rounded-full blur-2xl"></div>
               </div>
 
               <div className="stat-card">
@@ -488,15 +479,15 @@ export default function Dashboard() {
                     <AreaChart data={salesData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                       <defs>
                         <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#C8A17D" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#C8A17D" stopOpacity={0} />
+                          <stop offset="5%" stopColor={themeColor} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={themeColor} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
                       <XAxis dataKey="name" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
                       <YAxis tick={{ fontSize: 12 }} tickFormatter={(val) => `${val / 1000}k`} tickLine={false} axisLine={false} />
                       <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ borderRadius: '8px' }} />
-                      <Area type="monotone" dataKey="total" stroke="#C8A17D" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                      <Area type="monotone" dataKey="total" stroke={themeColor} strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -518,7 +509,7 @@ export default function Dashboard() {
                       <XAxis type="number" hide />
                       <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 11 }} />
                       <Tooltip formatter={(value: number) => formatCurrency(value)} cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '8px' }} />
-                      <Bar dataKey="sales" fill="#5C4033" radius={[0, 4, 4, 0]} barSize={20} />
+                      <Bar dataKey="sales" fill={themeColor} radius={[0, 4, 4, 0]} barSize={20} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

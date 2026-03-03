@@ -15,7 +15,7 @@ class MenuController extends Controller
      */
     public function index(Request $request)
     {
-        $query = MenuItem::with(['menuIngredients.inventoryItem']);
+        $query = MenuItem::with(['menuIngredients.inventoryItem', 'parent']);
 
         if ($request->has('search')) {
             $query->where('name', 'like', '%' . $request->search . '%');
@@ -56,12 +56,24 @@ class MenuController extends Controller
             'category' => 'required|string|max:255',
             'price' => 'required|numeric|min:0',
             'discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'uses_ingredients' => 'nullable|boolean',
+            'status' => 'nullable|in:ready,kosong,pending',
+            'stock' => 'nullable|integer|min:0',
             'image' => 'nullable|string',
-            'ingredients' => 'required|array|min:1',
+            'variants' => 'nullable|array',
+            'ingredients' => 'nullable|array',
             'ingredients.*.inventory_item_id' => 'required|exists:inventory_items,id',
             'ingredients.*.amount' => 'required|numeric|min:0',
             'store_id' => 'nullable|exists:stores,id',
+            'parent_id' => 'nullable|exists:menu_items,id',
+            'portion_value' => 'nullable|numeric|min:0.01',
         ]);
+        
+        // Validate ingredients based on uses_ingredients flag
+        $usesIngredients = $validated['uses_ingredients'] ?? true;
+        if ($usesIngredients && (!isset($validated['ingredients']) || count($validated['ingredients']) === 0)) {
+            return response()->json(['message' => 'Ingredients are required when uses_ingredients is true'], 422);
+        }
         
         // If admin didn't provide store_id, use current user's store_id (if any)
         if (!isset($validated['store_id']) && $request->user()->store_id) {
@@ -75,16 +87,25 @@ class MenuController extends Controller
                 'category' => $validated['category'],
                 'price' => $validated['price'],
                 'discount_percentage' => $validated['discount_percentage'] ?? 0,
+                'uses_ingredients' => $validated['uses_ingredients'] ?? true,
+                'status' => $validated['status'] ?? 'ready',
+                'stock' => isset($validated['stock']) ? $validated['stock'] : null,
                 'image' => $validated['image'] ?? null,
                 'store_id' => $validated['store_id'] ?? null,
+                'variants' => $validated['variants'] ?? null,
+                'parent_id' => $validated['parent_id'] ?? null,
+                'portion_value' => $validated['portion_value'] ?? 1.0,
             ]);
 
-            foreach ($validated['ingredients'] as $ingredient) {
-                MenuIngredient::create([
-                    'menu_item_id' => $menuItem->id,
-                    'inventory_item_id' => $ingredient['inventory_item_id'],
-                    'amount' => $ingredient['amount'],
-                ]);
+            // Only create ingredients if uses_ingredients is true
+            if (($validated['uses_ingredients'] ?? true) && isset($validated['ingredients'])) {
+                foreach ($validated['ingredients'] as $ingredient) {
+                    MenuIngredient::create([
+                        'menu_item_id' => $menuItem->id,
+                        'inventory_item_id' => $ingredient['inventory_item_id'],
+                        'amount' => $ingredient['amount'],
+                    ]);
+                }
             }
 
             DB::commit();
@@ -123,10 +144,16 @@ class MenuController extends Controller
             'category' => 'sometimes|string|max:255',
             'price' => 'sometimes|numeric|min:0',
             'discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'uses_ingredients' => 'nullable|boolean',
+            'status' => 'nullable|in:ready,kosong,pending',
+            'stock' => 'nullable|integer|min:0',
             'image' => 'nullable|string',
+            'variants' => 'nullable|array',
             'ingredients' => 'sometimes|array',
             'ingredients.*.inventory_item_id' => 'required|exists:inventory_items,id',
             'ingredients.*.amount' => 'required|numeric|min:0',
+            'parent_id' => 'nullable|exists:menu_items,id',
+            'portion_value' => 'nullable|numeric|min:0.01',
         ]);
 
         DB::beginTransaction();
@@ -136,20 +163,37 @@ class MenuController extends Controller
                 'category' => $validated['category'] ?? $menuItem->category,
                 'price' => $validated['price'] ?? $menuItem->price,
                 'discount_percentage' => $validated['discount_percentage'] ?? $menuItem->discount_percentage,
+                'uses_ingredients' => $validated['uses_ingredients'] ?? $menuItem->uses_ingredients,
+                'status' => $validated['status'] ?? $menuItem->status,
+                'stock' => array_key_exists('stock', $validated) ? $validated['stock'] : $menuItem->stock,
                 'image' => $validated['image'] ?? $menuItem->image,
+                'variants' => array_key_exists('variants', $validated) ? $validated['variants'] : $menuItem->variants,
+                'parent_id' => array_key_exists('parent_id', $validated) ? $validated['parent_id'] : $menuItem->parent_id,
+                'portion_value' => $validated['portion_value'] ?? $menuItem->portion_value,
             ]);
 
+            // Only update ingredients if uses_ingredients is true
             if (isset($validated['ingredients'])) {
                 // Delete existing ingredients
                 $menuItem->menuIngredients()->delete();
 
-                // Create new ingredients
-                foreach ($validated['ingredients'] as $ingredient) {
-                    MenuIngredient::create([
-                        'menu_item_id' => $menuItem->id,
-                        'inventory_item_id' => $ingredient['inventory_item_id'],
-                        'amount' => $ingredient['amount'],
-                    ]);
+                // Create new ingredients only if uses_ingredients is true
+                $usesIngredients = $validated['uses_ingredients'] ?? $menuItem->uses_ingredients;
+                
+                if ($usesIngredients) {
+                    if (count($validated['ingredients']) === 0) {
+                        // Rollback and return error
+                        DB::rollBack();
+                        return response()->json(['message' => 'Ingredients are required when uses_ingredients is true'], 422);
+                    }
+                    
+                    foreach ($validated['ingredients'] as $ingredient) {
+                        MenuIngredient::create([
+                            'menu_item_id' => $menuItem->id,
+                            'inventory_item_id' => $ingredient['inventory_item_id'],
+                            'amount' => $ingredient['amount'],
+                        ]);
+                    }
                 }
             }
 

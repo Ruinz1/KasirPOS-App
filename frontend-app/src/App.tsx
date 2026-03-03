@@ -14,6 +14,11 @@ import RolesPage from "./pages/RolesPage";
 import StorePage from "./pages/StorePage";
 import UsersPage from "./pages/UsersPage";
 import StoresManagementPage from "./pages/StoresManagementPage";
+import QueuePage from "./pages/QueuePage";
+import OrderHistoryPage from "./pages/OrderHistoryPage";
+import DailyShoppingPage from "./pages/DailyShoppingPage";
+import LeavePage from "./pages/LeavePage";
+import TablesPage from "./pages/TablesPage";
 import NotFound from "./pages/NotFound";
 import LoginPage from "./pages/LoginPage";
 
@@ -75,7 +80,12 @@ const App = () => (
             <Route path="/inventory" element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
             <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
             <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
+            <Route path="/tables" element={<ProtectedRoute><TablesPage /></ProtectedRoute>} />
+            <Route path="/queue" element={<ProtectedRoute><QueuePage /></ProtectedRoute>} />
+            <Route path="/order-history" element={<ProtectedRoute><OrderHistoryPage /></ProtectedRoute>} />
+            <Route path="/daily-shopping" element={<ProtectedRoute><DailyShoppingPage /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
+            <Route path="/leaves" element={<ProtectedRoute><LeavePage /></ProtectedRoute>} />
             <Route path="/employees" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
             <Route path="/capital" element={<ProtectedRoute><CapitalPage /></ProtectedRoute>} />
             <Route path="/store" element={<ProtectedRoute><StorePage /></ProtectedRoute>} />

@@ -59,7 +59,7 @@ export default function StorePage() {
         if (store) {
             setFormData({ name: store.name, location: store.location || '' });
             if (store.image) {
-                setPreviewUrl(`http://127.0.0.1:8000/storage/${store.image}`);
+                setPreviewUrl(`/storage/${store.image}`);
             }
         }
     }, [store]);

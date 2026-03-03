@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import axios from "axios";
+import api from "@/lib/api";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -27,7 +27,7 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
-            const response = await axios.post("http://127.0.0.1:8000/api/login", {
+            const response = await api.post("/login", {
                 email,
                 password
             });
