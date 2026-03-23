@@ -149,7 +149,7 @@ export function Sidebar() {
       <div className={`p-4 border-b border-border flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
         <div className={`flex items-center gap-3 overflow-hidden ${isCollapsed ? 'w-10' : 'w-full'}`}>
           <img
-            src={storeData?.image ? `/storage/${storeData.image}` : "/logo.png"}
+            src={storeData?.image ? `${import.meta.env.VITE_API_URL || ''}/storage/${storeData.image}` : "/logo.png"}
             alt="Logo"
             className="w-10 h-10 object-cover rounded-full bg-secondary flex-shrink-0"
           />

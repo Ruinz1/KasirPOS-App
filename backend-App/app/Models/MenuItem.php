@@ -37,6 +37,20 @@ class MenuItem extends Model
 
     protected $appends = ['current_stock'];
 
+    protected static function booted()
+    {
+        static::saving(function ($menuItem) {
+            // Automatically update status based on stock
+            if (!$menuItem->uses_ingredients) {
+                if ($menuItem->stock <= 0) {
+                    $menuItem->status = 'kosong';
+                } else if ($menuItem->stock > 0 && $menuItem->status === 'kosong') {
+                    $menuItem->status = 'ready';
+                }
+            }
+        });
+    }
+
     /**
      * Get the parent menu item (for shared stock)
      */
@@ -183,6 +197,14 @@ class MenuItem extends Model
             // Avoid infinite loop if current_stock uses status (it doesn't)
             return $this->getCurrentStockAttribute() > 0 ? 'ready' : 'kosong';
         }
+
+        $currentStock = $this->getCurrentStockAttribute();
+        if ($currentStock <= 0) {
+            return 'kosong';
+        } else if ($currentStock > 0 && $value === 'kosong') {
+            return 'ready';
+        }
+
         return $value;
     }
 }

@@ -18,7 +18,12 @@ import {
   Edit2,
   Upload,
   Image as ImageIcon,
-  Wallet
+  Wallet,
+  CalendarDays,
+  TrendingDown,
+  Activity,
+  Receipt,
+  Users
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -67,6 +72,9 @@ export default function ReportsPage() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingOrder, setEditingOrder] = useState<any>(null);
+  const [shoppingData, setShoppingData] = useState<{ total: number; per_day: { date: string; total: number; item_count: number }[] }>({ total: 0, per_day: [] });
+  const [showGajiCol, setShowGajiCol] = useState(true); // toggle kolom Operasional
+  const [showGajiSummary, setShowGajiSummary] = useState(true); // toggle estimasi gaji di card ringkasan
 
 
   // Helper for timezone correct date string YYYY-MM-DD
@@ -161,11 +169,11 @@ export default function ReportsPage() {
 
   useEffect(() => {
     if (orders.length > 0) {
-      processChartData(orders);
+      processChartData(orders, shoppingData.per_day || [], employees);
     } else {
       setChartData([]);
     }
-  }, [chartView, orders]);
+  }, [chartView, orders, shoppingData, employees]);
 
   // Load initial cash from localStorage based on date and store
   useEffect(() => {
@@ -233,19 +241,35 @@ export default function ReportsPage() {
         }
       }
 
-      const [statsRes, ordersRes] = await Promise.all([
+      const [statsRes, ordersRes, shoppingRes, empRes] = await Promise.all([
         api.get('/orders/report/sales', { params }),
         api.get('/orders', { params }),
+        api.get('/daily-shopping/range', {
+          params: {
+            start_date: filters.start_date,
+            end_date: filters.end_date,
+            ...(isAdmin() && filters.store_id && filters.store_id !== 'all' ? { store_id: filters.store_id } : {})
+          }
+        }),
+        api.get('/employees', {
+          params: {
+            role: 'karyawan',
+            ...(isAdmin() && filters.store_id && filters.store_id !== 'all' ? { store_id: filters.store_id } : {})
+          }
+        }),
       ]);
 
+      const fetchedEmployees = empRes.data || [];
       setStats(statsRes.data);
+      setShoppingData(shoppingRes.data || { total: 0, per_day: [] });
+      setEmployees(fetchedEmployees);
 
       // Sort orders by created_at ascending (daily_number 1 first)
       const sortedOrders = (ordersRes.data || []).sort((a: any, b: any) =>
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       );
       setOrders(sortedOrders);
-      processChartData(sortedOrders);
+      processChartData(sortedOrders, shoppingRes.data?.per_day || [], fetchedEmployees);
 
       // Calculate Menu Sales Stats (grouped by menu + kuah variant + packaging type)
       const items: any = {};
@@ -304,49 +328,95 @@ export default function ReportsPage() {
     }
   };
 
-  const processChartData = (ordersData: any[]) => {
+  const processChartData = (
+    ordersData: any[],
+    shoppingPerDayData: { date: string; total: number }[] = [],
+    employeesData: any[] = []
+  ) => {
     if (!ordersData || ordersData.length === 0) {
       setChartData([]);
       return;
     }
 
+    // Build shopping map: YYYY-MM-DD → total belanja
+    const shoppingMap: Record<string, number> = {};
+    shoppingPerDayData.forEach((s) => {
+      const d = new Date(s.date);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const iso = `${y}-${m}-${dd}`;
+      shoppingMap[iso] = (shoppingMap[iso] || 0) + Number(s.total);
+    });
+
+    // Hitung total gaji bulanan semua karyawan
+    const totalMonthlySalary = employeesData.reduce((sum: number, emp: any) => {
+      return sum + (Number(emp.monthly_salary) || 0);
+    }, 0);
+
     const grouped: any = {};
+    const groupedIso: Record<string, string> = {};
 
     ordersData.forEach((order) => {
       const date = new Date(order.created_at);
       let key = '';
+      let isoKey = '';
+
+      const y = date.getFullYear();
+      const mon = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
 
       if (chartView === 'daily') {
+        isoKey = `${y}-${mon}-${dd}`;
         key = date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
       } else if (chartView === 'monthly') {
         key = date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+        isoKey = `${y}-${mon}`;
       } else {
-        key = date.getFullYear().toString();
+        key = y.toString();
+        isoKey = y.toString();
       }
 
       if (!grouped[key]) {
-        grouped[key] = {
-          name: key,
-          pendapatan: 0,
-          hpp: 0,
-          profit: 0,
-          orders: 0,
-        };
+        grouped[key] = { name: key, pendapatan: 0, hpp: 0, gaji: 0, profit: 0, orders: 0 };
+        groupedIso[key] = isoKey;
       }
 
-      // Parse numbers properly
-      const total = parseFloat(order.total) || 0;
-      const cogs = parseFloat(order.cogs) || 0;
-      const profit = parseFloat(order.profit) || 0;
-
-      grouped[key].pendapatan += total;
-      grouped[key].hpp += cogs;
-      grouped[key].profit += profit;
+      grouped[key].pendapatan += parseFloat(order.total) || 0;
       grouped[key].orders += 1;
     });
 
-    const chartArray = Object.values(grouped);
-    setChartData(chartArray);
+    // Inject HPP belanja harian & gaji ke setiap group
+    Object.keys(grouped).forEach((key) => {
+      const iso = groupedIso[key];
+
+      // HPP dari belanja harian
+      if (chartView === 'daily') {
+        grouped[key].hpp = shoppingMap[iso] || 0;
+        // Gaji: totalMonthlySalary / hari dalam bulan
+        const [yr, mo] = iso.split('-').map(Number);
+        const daysInMonth = new Date(yr, mo, 0).getDate();
+        grouped[key].gaji = daysInMonth > 0 ? totalMonthlySalary / daysInMonth : 0;
+      } else if (chartView === 'monthly') {
+        grouped[key].hpp = Object.entries(shoppingMap)
+          .filter(([k]) => k.startsWith(iso))
+          .reduce((sum, [, v]) => sum + v, 0);
+        // Gaji: 1 bulan penuh
+        grouped[key].gaji = totalMonthlySalary;
+      } else {
+        // yearly
+        grouped[key].hpp = Object.entries(shoppingMap)
+          .filter(([k]) => k.startsWith(iso))
+          .reduce((sum, [, v]) => sum + v, 0);
+        // Gaji: 12 bulan
+        grouped[key].gaji = totalMonthlySalary * 12;
+      }
+
+      // Profit bersih = Penjualan - HPP - Gaji
+      grouped[key].profit = grouped[key].pendapatan - grouped[key].hpp - grouped[key].gaji;
+    });
+
+    setChartData(Object.values(grouped));
   };
 
   const handleViewOrder = async (orderId: number) => {
@@ -411,6 +481,49 @@ export default function ReportsPage() {
   const handleExportExcel = () => {
     const analysis = getTargetAnalysis();
 
+    let totalMakanDisiniQty = 0;
+    let totalMakanDisiniSales = 0;
+    let totalDibungkusQty = 0;
+    let totalDibungkusSales = 0;
+    let totalMinumanQty = 0;
+    let totalMinumanSales = 0;
+    let totalSnackQty = 0;
+    let totalSnackSales = 0;
+
+    orders.forEach(order => {
+      if (order.status === 'cancelled') return;
+      order.items.forEach((item: any) => {
+        if (!item.menu_item) return;
+        const cat = item.menu_item.category?.toLowerCase() || '';
+        const name = item.menu_item.name?.toLowerCase() || '';
+        const price = Number(item.price) || 0;
+        const qty = Number(item.quantity) || 0;
+
+        const isMakanan = cat === 'makanan' || name.includes('bakso') || name.includes('mie') || name.includes('nasi');
+        const isMinuman = name.includes('jeruk') || name.includes('aquviva') || name.includes('mineral') || name.includes('teh') || name.includes('gelas');
+        const isSnack = cat === 'snack' || name.includes('kerupuk') || name.includes('krupuk') || name.includes('kacang') || name.includes('snack');
+
+        if (isMakanan) {
+          const isDibungkus = order.order_type === 'takeaway' || !!item.is_takeaway;
+          if (isDibungkus) {
+            totalDibungkusQty += qty;
+            totalDibungkusSales += (price * qty);
+          } else {
+            totalMakanDisiniQty += qty;
+            totalMakanDisiniSales += (price * qty);
+          }
+        }
+        else if (isMinuman) {
+          totalMinumanQty += qty;
+          totalMinumanSales += (price * qty);
+        }
+        else if (isSnack) {
+          totalSnackQty += qty;
+          totalSnackSales += (price * qty);
+        }
+      });
+    });
+
     // 1. Daily Summary Sheet
     const summaryData = [{
       'Periode Awal': filters.start_date,
@@ -422,7 +535,15 @@ export default function ReportsPage() {
       'Total Profit': stats?.total_profit || 0,
       'Target Penjualan (Rp)': analysis.target,
       'Status Target': analysis.achieved ? 'TERCAPAI' : 'BELUM TERCAPAI',
-      'Persentase Capaian': `${analysis.percentage.toFixed(2)}%`
+      'Persentase Capaian': `${analysis.percentage.toFixed(2)}%`,
+      'Item Makan Disini (Qty)': totalMakanDisiniQty,
+      'Item Dibungkus (Qty)': totalDibungkusQty,
+      'Penjualan Makan Disini (Rp)': totalMakanDisiniSales,
+      'Penjualan Dibungkus (Rp)': totalDibungkusSales,
+      'Item Minuman (Qty)': totalMinumanQty,
+      'Penjualan Minuman (Rp)': totalMinumanSales,
+      'Item Snack (Qty)': totalSnackQty,
+      'Penjualan Snack (Rp)': totalSnackSales
     }];
 
     // 2. Menu Sales Sheet
@@ -953,6 +1074,716 @@ export default function ReportsPage() {
           </div>
         )}
 
+        {/* Recap Dine In & Take Away */}
+        {orders.length > 0 && (() => {
+          let totalMakanDisiniQty = 0;
+          let totalMakanDisiniSales = 0;
+          let totalDibungkusQty = 0;
+          let totalDibungkusSales = 0;
+          let totalMinumanQty = 0;
+          let totalMinumanSales = 0;
+          let totalSnackQty = 0;
+          let totalSnackSales = 0;
+
+          orders.forEach((order: any) => {
+            if (order.status === 'cancelled') return;
+            order.items.forEach((item: any) => {
+              if (!item.menu_item) return;
+              const cat = item.menu_item.category?.toLowerCase() || '';
+              const name = item.menu_item.name?.toLowerCase() || '';
+              const price = Number(item.price) || 0;
+              const qty = Number(item.quantity) || 0;
+
+              const isMakanan = cat === 'makanan' || name.includes('bakso') || name.includes('mie') || name.includes('nasi');
+              const isMinuman = name.includes('jeruk') || name.includes('aquviva') || name.includes('mineral') || name.includes('teh') || name.includes('gelas');
+              const isSnack = cat === 'snack' || name.includes('kerupuk') || name.includes('krupuk') || name.includes('kacang') || name.includes('snack');
+
+              if (isMakanan) {
+                const isDibungkus = order.order_type === 'takeaway' || !!item.is_takeaway;
+                if (isDibungkus) {
+                  totalDibungkusQty += qty;
+                  totalDibungkusSales += (price * qty);
+                } else {
+                  totalMakanDisiniQty += qty;
+                  totalMakanDisiniSales += (price * qty);
+                }
+              }
+              else if (isMinuman) {
+                totalMinumanQty += qty;
+                totalMinumanSales += (price * qty);
+              }
+              else if (isSnack) {
+                totalSnackQty += qty;
+                totalSnackSales += (price * qty);
+              }
+            });
+          });
+
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              <div className="card-elevated p-5 bg-blue-50/50 dark:bg-blue-900/10 border-l-4 border-blue-500">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+                    <span className="text-lg">🍽️</span>
+                  </div>
+                  <h3 className="font-semibold text-sm">Dine In (Bakso/Mkn)</h3>
+                </div>
+                <div className="mt-3">
+                  <p className="text-xl font-bold">{totalMakanDisiniQty} <span className="text-xs font-normal text-muted-foreground">porsi</span></p>
+                  <p className="text-sm font-semibold text-success mt-1">{formatCurrency(totalMakanDisiniSales)}</p>
+                </div>
+              </div>
+
+              <div className="card-elevated p-5 bg-amber-50/50 dark:bg-amber-900/10 border-l-4 border-amber-500">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-600 dark:text-amber-400">
+                    <span className="text-lg">📦</span>
+                  </div>
+                  <h3 className="font-semibold text-sm">Take Away (Bakso/Mkn)</h3>
+                </div>
+                <div className="mt-3">
+                  <p className="text-xl font-bold">{totalDibungkusQty} <span className="text-xs font-normal text-muted-foreground">porsi</span></p>
+                  <p className="text-sm font-semibold text-success mt-1">{formatCurrency(totalDibungkusSales)}</p>
+                </div>
+              </div>
+
+              <div className="card-elevated p-5 bg-cyan-50/50 dark:bg-cyan-900/10 border-l-4 border-cyan-500">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 bg-cyan-100 dark:bg-cyan-900/30 rounded-lg text-cyan-600 dark:text-cyan-400">
+                    <span className="text-lg">🥤</span>
+                  </div>
+                  <h3 className="font-semibold text-sm">Minuman (Teh/Jeruk/dll)</h3>
+                </div>
+                <div className="mt-3">
+                  <p className="text-xl font-bold">{totalMinumanQty} <span className="text-xs font-normal text-muted-foreground">gelas</span></p>
+                  <p className="text-sm font-semibold text-success mt-1">{formatCurrency(totalMinumanSales)}</p>
+                </div>
+              </div>
+
+              <div className="card-elevated p-5 bg-orange-50/50 dark:bg-orange-900/10 border-l-4 border-orange-500">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 bg-orange-100 dark:bg-orange-900/30 rounded-lg text-orange-600 dark:text-orange-400">
+                    <span className="text-lg">🍪</span>
+                  </div>
+                  <h3 className="font-semibold text-sm">Snack/Kerupuk</h3>
+                </div>
+                <div className="mt-3">
+                  <p className="text-xl font-bold">{totalSnackQty} <span className="text-xs font-normal text-muted-foreground">bks</span></p>
+                  <p className="text-sm font-semibold text-success mt-1">{formatCurrency(totalSnackSales)}</p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* === ANALISIS RATA-RATA & RINCIAN HARIAN === */}
+        {stats && (() => {
+          const analysis = getTargetAnalysis();
+          const days = analysis.days;
+          const totalSales = Number(stats.total_sales) || 0;
+          const totalCogs = Number(stats.total_cogs) || 0;
+          const totalProfit = Number(stats.total_profit) || 0;
+          const totalOrders = Number(stats.total_orders) || 0;
+
+          const avgSalesPerDay = days > 0 ? totalSales / days : 0;
+          const avgCogsPerDay = days > 0 ? totalCogs / days : 0;
+          const avgProfitPerDay = days > 0 ? totalProfit / days : 0;
+          const avgOrdersPerDay = days > 0 ? totalOrders / days : 0;
+          const avgSalesPerOrder = totalOrders > 0 ? totalSales / totalOrders : 0;
+          const profitMargin = totalSales > 0 ? (totalProfit / totalSales) * 100 : 0;
+
+          // Build per-day breakdown — gunakan isoDate untuk lookup & sorting agar akurat
+          const perDayMap: Record<string, { isoDate: string; displayDate: string; orders: number; pendapatan: number; hpp: number; profit: number }> = {};
+          orders.forEach((order: any) => {
+            if (order.status === 'cancelled') return;
+            const d = new Date(order.created_at);
+            // Gunakan local date string untuk key agar tidak kena timezone UTC issue
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const isoDate = `${y}-${m}-${dd}`;
+            const displayDate = d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+            if (!perDayMap[isoDate]) {
+              perDayMap[isoDate] = { isoDate, displayDate, orders: 0, pendapatan: 0, hpp: 0, profit: 0 };
+            }
+            perDayMap[isoDate].orders += 1;
+            perDayMap[isoDate].pendapatan += parseFloat(order.total) || 0;
+            perDayMap[isoDate].hpp += parseFloat(order.cogs) || 0;
+            perDayMap[isoDate].profit += parseFloat(order.profit) || 0;
+          });
+          // Sort berdasarkan isoDate string (YYYY-MM-DD) — aman dan akurat
+          const perDayData = Object.values(perDayMap).sort((a, b) => a.isoDate.localeCompare(b.isoDate));
+
+          // === HPP BELANJA HARIAN ===
+          const totalShoppingHpp = shoppingData.total || 0;
+          // Map belanja per hari untuk tampil di tabel rincian
+          const shoppingPerDayMap: Record<string, number> = {};
+          const shoppingItemCountMap: Record<string, number> = {};
+          (shoppingData.per_day || []).forEach((d: any) => {
+            const key = String(d.date || '').substring(0, 10); // normalisasi ke YYYY-MM-DD
+            shoppingPerDayMap[key] = Number(d.total) || 0;
+            shoppingItemCountMap[key] = Number(d.item_count) || 0;
+          });
+
+          // === KALKULASI GAJI PROPORSIONAL ===
+          const startD = new Date(filters.start_date);
+          const daysInMonth = new Date(startD.getFullYear(), startD.getMonth() + 1, 0).getDate();
+
+          let totalSalaryForRange = 0;
+          const salaryBreakdown: { name: string; monthlySalary: number; salaryType: string; baseSalary: number; bonus: number; prorated: number }[] = [];
+          employees.forEach((emp: any) => {
+            const monthlySalary = Number(emp.monthly_salary) || 0;
+            if (monthlySalary > 0) {
+              const prorated = (monthlySalary / daysInMonth) * days;
+              totalSalaryForRange += prorated;
+              salaryBreakdown.push({
+                name: emp.name,
+                monthlySalary,
+                salaryType: emp.salary_type || 'auto',
+                baseSalary: Number(emp.base_salary) || 0,
+                bonus: Number(emp.bonus) || 0,
+                prorated,
+              });
+            }
+          });
+
+          // Laba bersih = Penjualan - HPP Belanja Harian - Gaji
+          const netProfitAfterSalary = totalSales - totalShoppingHpp - totalSalaryForRange;
+          const netProfitMargin = totalSales > 0 ? (netProfitAfterSalary / totalSales) * 100 : 0;
+
+          const isMultiDay = days > 1;
+
+          return (
+            <div className="card-elevated p-6 mb-8">
+              {/* Header */}
+              <div className="flex items-center gap-2 mb-6">
+                <Activity className="w-5 h-5 text-primary" />
+                <h3 className="font-display font-semibold text-lg">Analisis Rata-rata & Rincian Harian</h3>
+                <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                  {filters.start_date === filters.end_date
+                    ? filters.start_date
+                    : `${filters.start_date} → ${filters.end_date} (${days} hari)`}
+                </span>
+              </div>
+
+              {/* Rata-rata Cards */}
+              {(() => {
+                const gajiPerHari = days > 0 ? totalSalaryForRange / days : 0;
+                const avgShoppingPerDay = days > 0 ? totalShoppingHpp / days : 0;
+                const avgTotalOperasionalPerDay = avgShoppingPerDay + gajiPerHari; // HPP + Gaji
+                const avgNetProfitPerDay = days > 0 ? netProfitAfterSalary / days : 0;
+                const netMarginPerOrder = totalOrders > 0 ? netProfitAfterSalary / totalOrders : 0;
+                return (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                    <div className="rounded-xl border border-border p-4 bg-gradient-to-br from-success/5 to-transparent">
+                      <div className="flex items-center gap-2 mb-1">
+                        <TrendingUp className="w-4 h-4 text-success" />
+                        <p className="text-xs text-muted-foreground">Rata-rata Penjualan/Hari</p>
+                      </div>
+                      <p className="text-lg font-bold text-success">{formatCurrency(avgSalesPerDay)}</p>
+                      {isMultiDay && <p className="text-xs text-muted-foreground mt-0.5">dari {days} hari</p>}
+                    </div>
+
+                    <div className="rounded-xl border border-border p-4 bg-gradient-to-br from-warning/5 to-transparent">
+                      <div className="flex items-center gap-2 mb-1">
+                        <TrendingDown className="w-4 h-4 text-warning" />
+                        <p className="text-xs text-muted-foreground">Rata-rata Operasional/Hari</p>
+                      </div>
+                      <p className="text-lg font-bold text-warning">{formatCurrency(avgTotalOperasionalPerDay)}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Belanja {formatCurrency(avgShoppingPerDay)} + Gaji {formatCurrency(gajiPerHari)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-border p-4 bg-gradient-to-br from-blue-500/5 to-transparent">
+                      <div className="flex items-center gap-2 mb-1">
+                        <DollarSign className="w-4 h-4 text-blue-500" />
+                        <p className="text-xs text-muted-foreground">Rata-rata Untung Bersih/Hari</p>
+                      </div>
+                      <p className={`text-lg font-bold ${avgNetProfitPerDay >= 0 ? 'text-blue-500' : 'text-destructive'}`}>
+                        {formatCurrency(avgNetProfitPerDay)}
+                      </p>
+                      {isMultiDay && <p className="text-xs text-muted-foreground mt-0.5">dari {days} hari</p>}
+                    </div>
+
+                    <div className="rounded-xl border border-border p-4 bg-gradient-to-br from-primary/5 to-transparent">
+                      <div className="flex items-center gap-2 mb-1">
+                        <ShoppingBag className="w-4 h-4 text-primary" />
+                        <p className="text-xs text-muted-foreground">Rata-rata Transaksi/Hari</p>
+                      </div>
+                      <p className="text-lg font-bold">{avgOrdersPerDay.toFixed(1)}</p>
+                      {isMultiDay && <p className="text-xs text-muted-foreground mt-0.5">dari {days} hari</p>}
+                    </div>
+
+                    <div className="rounded-xl border border-border p-4 bg-gradient-to-br from-purple-500/5 to-transparent">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Receipt className="w-4 h-4 text-purple-500" />
+                        <p className="text-xs text-muted-foreground">Rata-rata/Transaksi</p>
+                      </div>
+                      <p className="text-lg font-bold text-purple-500">{formatCurrency(avgSalesPerOrder)}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Margin bersih: {netProfitMargin.toFixed(1)}%
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Rincian Per Hari — hanya tampil jika range > 1 hari */}
+              {isMultiDay && perDayData.length > 0 && (() => {
+                const gajiPerHari = days > 0 ? totalSalaryForRange / days : 0;
+                return (
+                  <>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                        <p className="text-sm font-semibold">Rincian Per Hari</p>
+                        <span className="text-xs text-muted-foreground">
+                          (Untung Bersih = Penjualan − Belanja{showGajiCol ? ' − Operasional' : ''})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowGajiCol(v => !v)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary transition-colors"
+                        title={showGajiCol ? 'Sembunyikan kolom Operasional' : 'Tampilkan kolom Operasional'}
+                      >
+                        {showGajiCol ? (
+                          <><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg> Operasional</>
+                        ) : (
+                          <><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg> <span className="text-muted-foreground">Operasional</span></>
+                        )}
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border bg-secondary/30">
+                            <th className="text-left py-2.5 px-3 font-semibold">Tanggal</th>
+                            <th className="text-right py-2.5 px-3 font-semibold">Trx</th>
+                            <th className="text-right py-2.5 px-3 font-semibold text-success">Penjualan</th>
+                            <th className="text-right py-2.5 px-3 font-semibold text-warning">Belanja</th>
+                            {showGajiCol && (
+                              <th className="text-right py-2.5 px-3 font-semibold text-orange-500">
+                                Operasional
+                                <div className="text-[10px] font-normal text-muted-foreground">Gaji/Hari</div>
+                              </th>
+                            )}
+                            <th className="text-right py-2.5 px-3 font-semibold text-blue-500">
+                              Untung Bersih
+                              {!showGajiCol && (
+                                <div className="text-[10px] font-normal text-muted-foreground">tanpa operasional</div>
+                              )}
+                            </th>
+                            <th className="text-right py-2.5 px-3 font-semibold">Margin</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {perDayData.map((row, idx) => {
+                            const belanja = shoppingPerDayMap[row.isoDate] || 0;
+                            const untungBersih = showGajiCol
+                              ? row.pendapatan - belanja - gajiPerHari
+                              : row.pendapatan - belanja;
+                            const margin = row.pendapatan > 0 ? (untungBersih / row.pendapatan) * 100 : 0;
+                            const isBelowAvg = row.pendapatan < avgSalesPerDay;
+                            const isProfit = untungBersih >= 0;
+                            return (
+                              <tr key={idx} className={`border-b border-border/50 hover:bg-secondary/30 transition-colors ${isBelowAvg ? 'opacity-75' : ''}`}>
+                                <td className="py-2.5 px-3 font-medium">
+                                  <div className="flex items-center gap-1.5">
+                                    <CalendarDays className="w-3.5 h-3.5 text-muted-foreground" />
+                                    {row.displayDate}
+                                    <span className={`text-xs ${isBelowAvg ? 'text-destructive' : 'text-success'}`}>
+                                      {isBelowAvg ? '↓' : '↑'}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">{row.orders}</td>
+                                <td className="py-2.5 px-3 text-right font-medium text-success">{formatCurrency(row.pendapatan)}</td>
+                                <td className="py-2.5 px-3 text-right text-warning">
+                                  {belanja > 0 ? (
+                                    <div>
+                                      <div className="font-medium">{formatCurrency(belanja)}</div>
+                                      <div className="text-xs text-muted-foreground">
+                                        {shoppingItemCountMap[row.isoDate] || 0} item
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-muted-foreground text-xs">-</span>
+                                  )}
+                                </td>
+                                {showGajiCol && (
+                                  <td className="py-2.5 px-3 text-right text-orange-500 text-xs">{formatCurrency(gajiPerHari)}</td>
+                                )}
+                                <td className="py-2.5 px-3 text-right font-bold">
+                                  <span className={isProfit ? 'text-success' : 'text-destructive'}>
+                                    {formatCurrency(untungBersih)}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${margin >= 20 ? 'bg-success/10 text-success' :
+                                    margin >= 10 ? 'bg-warning/10 text-warning' :
+                                      margin >= 0 ? 'bg-secondary text-muted-foreground' :
+                                        'bg-destructive/10 text-destructive'
+                                    }`}>
+                                    {margin.toFixed(1)}%
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {/* Total Row */}
+                        <tfoot>
+                          <tr className="border-t-2 border-border font-bold bg-secondary/20">
+                            <td className="py-3 px-3">TOTAL ({days} hari)</td>
+                            <td className="py-3 px-3 text-right">{totalOrders}</td>
+                            <td className="py-3 px-3 text-right text-success">{formatCurrency(totalSales)}</td>
+                            <td className="py-3 px-3 text-right text-warning">{formatCurrency(totalShoppingHpp)}</td>
+                            {showGajiCol && (
+                              <td className="py-3 px-3 text-right text-orange-500">{formatCurrency(totalSalaryForRange)}</td>
+                            )}
+                            <td className="py-3 px-3 text-right">
+                              {(() => {
+                                const totalUntung = showGajiCol
+                                  ? netProfitAfterSalary
+                                  : totalSales - totalShoppingHpp;
+                                const totalMargin = totalSales > 0 ? (totalUntung / totalSales) * 100 : 0;
+                                return (
+                                  <span className={totalUntung >= 0 ? 'text-success' : 'text-destructive'}>
+                                    {formatCurrency(totalUntung)}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              {(() => {
+                                const totalUntung = showGajiCol
+                                  ? netProfitAfterSalary
+                                  : totalSales - totalShoppingHpp;
+                                const totalMargin = totalSales > 0 ? (totalUntung / totalSales) * 100 : 0;
+                                return (
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${totalMargin >= 20 ? 'bg-success/10 text-success' :
+                                    totalMargin >= 10 ? 'bg-warning/10 text-warning' :
+                                      totalMargin >= 0 ? 'bg-secondary text-muted-foreground' :
+                                        'bg-destructive/10 text-destructive'
+                                    }`}>
+                                    {totalMargin.toFixed(1)}%
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* Single day summary — analisa lengkap untuk 1 hari */}
+              {!isMultiDay && (() => {
+                const gajiHariIni = days > 0 ? totalSalaryForRange / days : 0;
+                const belanjaHariIni = totalShoppingHpp;
+                const untungBersihHariIni = totalSales - belanjaHariIni - gajiHariIni;
+                const marginHariIni = totalSales > 0 ? (untungBersihHariIni / totalSales) * 100 : 0;
+                return (
+                  <div className="mt-4 rounded-xl border border-border overflow-hidden">
+                    <div className="bg-secondary/20 px-4 py-2.5 border-b border-border">
+                      <p className="text-sm font-semibold flex items-center gap-2">
+                        <CalendarDays className="w-4 h-4" />
+                        Analisa Keuntungan Hari Ini — {filters.start_date}
+                      </p>
+                    </div>
+                    <table className="w-full text-sm">
+                      <tbody>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2.5 px-4 text-muted-foreground">Penjualan</td>
+                          <td className="py-2.5 px-4 text-right font-medium text-success">{formatCurrency(totalSales)}</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2.5 px-4 text-muted-foreground">Belanja Harian (HPP)</td>
+                          <td className="py-2.5 px-4 text-right text-warning">- {formatCurrency(belanjaHariIni)}</td>
+                        </tr>
+                        <tr className="border-b border-border/50">
+                          <td className="py-2.5 px-4 text-muted-foreground">
+                            Gaji Karyawan/Hari
+                            {salaryBreakdown.length > 0 && (
+                              <span className="text-xs ml-1 text-muted-foreground">
+                                ({formatCurrency(totalSalaryForRange)}/{daysInMonth} hari)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-4 text-right text-orange-500">- {formatCurrency(gajiHariIni)}</td>
+                        </tr>
+                        <tr className="bg-secondary/10">
+                          <td className="py-3 px-4 font-bold">Untung Bersih</td>
+                          <td className={`py-3 px-4 text-right font-bold text-lg ${untungBersihHariIni >= 0 ? 'text-success' : 'text-destructive'}`}>
+                            {formatCurrency(untungBersihHariIni)}
+                            <span className="text-xs font-normal ml-1 text-muted-foreground">
+                              ({marginHariIni.toFixed(1)}%)
+                            </span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
+
+
+              {/* === SECTION GAJI === */}
+              {salaryBreakdown.length > 0 && (
+                <>
+                  <div className="border-t border-border mt-6 pt-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Users className="w-4 h-4 text-orange-500" />
+                      <p className="text-sm font-semibold">Estimasi Gaji Karyawan</p>
+                      <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
+                        {days} hari dari {daysInMonth} hari dalam bulan
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto mb-4">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border bg-orange-500/5">
+                            <th className="text-left py-2.5 px-4 font-semibold">Karyawan</th>
+                            <th className="text-left py-2.5 px-4 font-semibold">Tipe</th>
+                            <th className="text-right py-2.5 px-4 font-semibold">Gaji Bulanan</th>
+                            <th className="text-right py-2.5 px-4 font-semibold">Bonus</th>
+                            <th className="text-right py-2.5 px-4 font-semibold text-orange-500">Estimasi ({days} hari)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {salaryBreakdown.map((emp, idx) => (
+                            <tr key={idx} className="border-b border-border/50 hover:bg-secondary/20">
+                              <td className="py-2.5 px-4 font-medium">{emp.name}</td>
+                              <td className="py-2.5 px-4">
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${emp.salaryType === 'manual'
+                                  ? 'bg-blue-500/10 text-blue-500'
+                                  : 'bg-secondary text-muted-foreground'
+                                  }`}>
+                                  {emp.salaryType === 'manual' ? 'Manual' : 'Auto (50rb/hari)'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-4 text-right">{formatCurrency(emp.monthlySalary)}</td>
+                              <td className="py-2.5 px-4 text-right text-muted-foreground">
+                                {emp.bonus > 0 ? `+${formatCurrency(emp.bonus)}` : '-'}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-medium text-orange-500">
+                                {formatCurrency(emp.prorated)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-border font-bold bg-orange-500/5">
+                            <td className="py-3 px-4" colSpan={4}>Total Estimasi Gaji ({days} hari)</td>
+                            <td className="py-3 px-4 text-right text-orange-500">{formatCurrency(totalSalaryForRange)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Ringkasan Laba Bersih */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                      <div className="rounded-xl border border-border p-4 bg-success/5">
+                        <p className="text-xs text-muted-foreground mb-1">Total Penjualan</p>
+                        <p className="text-lg font-bold text-success">{formatCurrency(totalSales)}</p>
+                      </div>
+                      <div className="rounded-xl border border-border p-4 bg-warning/5">
+                        <p className="text-xs text-muted-foreground mb-1">HPP (Belanja Harian)</p>
+                        <p className="text-lg font-bold text-warning">- {formatCurrency(totalShoppingHpp)}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">dari data belanja</p>
+                      </div>
+
+                      <div className="rounded-xl border border-border p-4 bg-orange-500/5">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs text-muted-foreground">Estimasi Gaji</p>
+                          <button
+                            type="button"
+                            onClick={() => setShowGajiSummary(v => !v)}
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                            title={showGajiSummary ? 'Kecualikan gaji dari Laba Bersih' : 'Sertakan gaji ke Laba Bersih'}
+                          >
+                            {showGajiSummary ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                            )}
+                          </button>
+                        </div>
+                        {showGajiSummary ? (
+                          <>
+                            <p className="text-lg font-bold text-orange-500">- {formatCurrency(totalSalaryForRange)}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{days} hari</p>
+                          </>
+                        ) : (
+                          <div className="mt-2">
+                            <span className="text-xs font-medium bg-secondary px-2 py-1 rounded-md text-muted-foreground">
+                              Dikecualikan
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {(() => {
+                        const activeLabaBersih = showGajiSummary
+                          ? netProfitAfterSalary
+                          : totalSales - totalShoppingHpp;
+                        const activeMargin = totalSales > 0 ? (activeLabaBersih / totalSales) * 100 : 0;
+
+                        return (
+                          <div className={`rounded-xl border-2 p-4 ${activeLabaBersih >= 0
+                            ? 'border-success bg-success/5'
+                            : 'border-destructive bg-destructive/5'
+                            }`}>
+                            <p className="text-xs text-muted-foreground mb-1">
+                              Laba Bersih {!showGajiSummary && <span className="text-[10px] ml-1">(Tanpa Gaji)</span>}
+                            </p>
+                            <p className={`text-xl font-bold ${activeLabaBersih >= 0 ? 'text-success' : 'text-destructive'}`}>
+                              {formatCurrency(activeLabaBersih)}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Margin bersih: {activeMargin.toFixed(1)}%</p>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* === RINCIAN SETORAN KAS PER METODE PEMBAYARAN === */}
+                    {(() => {
+                      const paidOrders = orders.filter((o: any) => o.status !== 'cancelled' && o.payment_status === 'paid');
+
+                      const sumByMethod = (method: string) =>
+                        paidOrders.reduce((sum: number, o: any) => {
+                          let s = 0;
+                          if (o.payment_method === method) s += Number(o.paid_amount || o.total || 0);
+                          if (o.second_payment_method === method) s += Number(o.second_paid_amount || 0);
+                          return sum + s;
+                        }, 0);
+
+                      const totalCashReceived = sumByMethod('cash');
+                      const totalCashChange = paidOrders.reduce((sum: number, o: any) => {
+                        if (o.payment_method === 'cash' || o.second_payment_method === 'cash') {
+                          return sum + Number(o.change_amount || 0);
+                        }
+                        return sum;
+                      }, 0);
+
+                      const initialCashValue = initialCash ? parseFloat(initialCash) : 0;
+                      const cashSales = totalCashReceived - totalCashChange;
+                      const totalCash = cashSales + initialCashValue;
+
+                      const totalQris = sumByMethod('qris');
+                      const totalCard = sumByMethod('card');
+                      const totalNonCash = totalQris + totalCard;
+                      const totalAll = totalCash + totalNonCash;
+
+                      return (
+                        <div className="mt-6 rounded-xl border border-border overflow-hidden">
+                          <div className="bg-secondary/30 px-4 py-2.5 border-b border-border flex items-center justify-between">
+                            <p className="text-sm font-semibold flex items-center gap-2">
+                              💰 Rincian Setoran Kas
+                            </p>
+                            <span className="text-xs text-muted-foreground">Total terkumpul: {formatCurrency(totalAll)}</span>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
+
+                            {/* CASH — setoran langsung */}
+                            <div className="p-4 bg-emerald-500/5">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-lg">💵</span>
+                                <div>
+                                  <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">Cash di Kasir</p>
+                                  <p className="text-[10px] text-muted-foreground">Sesuai fisik laci kasir</p>
+                                </div>
+                              </div>
+                              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(totalCash)}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                                Modal: {formatCurrency(initialCashValue)}<br />
+                                Jual: {formatCurrency(cashSales)}
+                              </p>
+                              <div className="mt-2 h-1.5 rounded-full bg-secondary overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-emerald-500 transition-all"
+                                  style={{ width: totalAll > 0 ? `${(totalCash / totalAll) * 100}%` : '0%' }}
+                                />
+                              </div>
+                              <p className="text-[10px] text-muted-foreground mt-1">
+                                {totalAll > 0 ? ((totalCash / totalAll) * 100).toFixed(1) : '0'}% dari total kas masuk
+                              </p>
+                            </div>
+
+                            {/* QRIS */}
+                            <div className="p-4 bg-blue-500/5">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-lg">📱</span>
+                                <div>
+                                  <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">QRIS / Transfer</p>
+                                  <p className="text-[10px] text-muted-foreground">Masuk rekening — belum di tangan</p>
+                                </div>
+                              </div>
+                              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(totalNonCash)}</p>
+                              <div className="mt-2 h-1.5 rounded-full bg-secondary overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-blue-500 transition-all"
+                                  style={{ width: totalAll > 0 ? `${(totalNonCash / totalAll) * 100}%` : '0%' }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {totalAll > 0 ? ((totalNonCash / totalAll) * 100).toFixed(1) : '0'}% dari total
+                                {totalQris > 0 && totalCard > 0 && (
+                                  <span className="ml-1">(QRIS {formatCurrency(totalQris)} + TF {formatCurrency(totalCard)})</span>
+                                )}
+                              </p>
+                            </div>
+
+                            {/* RINGKASAN */}
+                            <div className="p-4 bg-secondary/10">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-lg">📊</span>
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-wide">Kesimpulan</p>
+                                  <p className="text-[10px] text-muted-foreground">Belanja dibayar dari kas</p>
+                                </div>
+                              </div>
+                              <div className="space-y-1.5 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Kas Masuk (Cash)</span>
+                                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(totalCash)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Belanja (HPP)</span>
+                                  <span className="font-medium text-warning">- {formatCurrency(totalShoppingHpp)}</span>
+                                </div>
+                                <div className="border-t border-border pt-1.5 flex justify-between font-bold">
+                                  <span>Sisa Kas</span>
+                                  <span className={totalCash - totalShoppingHpp >= 0 ? 'text-success' : 'text-destructive'}>
+                                    {formatCurrency(totalCash - totalShoppingHpp)}
+                                  </span>
+                                </div>
+                                {totalNonCash > 0 && (
+                                  <div className="flex justify-between text-xs text-muted-foreground pt-0.5">
+                                    <span>+ Rekening (TF/QRIS)</span>
+                                    <span className="text-blue-500">{formatCurrency(totalNonCash)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Sales Chart */}
         {stats && (
           <div className="card-elevated p-6 mb-8">
@@ -1018,9 +1849,10 @@ export default function ReportsPage() {
                     }}
                   />
                   <Legend />
-                  <Bar dataKey="pendapatan" fill="#10b981" name="Pendapatan" />
-                  <Bar dataKey="hpp" fill="#f59e0b" name="HPP" />
-                  <Bar dataKey="profit" fill="#3b82f6" name="Profit" />
+                  <Bar dataKey="pendapatan" fill="#10b981" name="Pendapatan" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="hpp" fill="#f59e0b" name="HPP (Belanja)" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="gaji" fill="#f97316" name="Gaji" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="profit" fill="#3b82f6" name="Profit Bersih" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -1479,7 +2311,7 @@ export default function ReportsPage() {
                     <div className="flex justify-center mb-1">
                       {selectedOrder?.store?.image ? (
                         <img
-                          src={`/storage/${selectedOrder.store.image}`}
+                          src={`${import.meta.env.VITE_API_URL || ''}/storage/${selectedOrder.store.image}`}
                           alt="Store Logo"
                           className="w-12 h-12 object-cover rounded-full"
                         />
@@ -1545,20 +2377,40 @@ export default function ReportsPage() {
                           <span>TOTAL</span>
                           <span>{formatCurrency(selectedOrder.total)}</span>
                         </div>
-                        {(selectedOrder as any).paid_amount && (
+                        {(selectedOrder as any).second_payment_method ? (
                           <>
+                            <div className="text-center font-bold mt-1 mb-0.5 pt-0.5 border-t border-dashed border-black/30">
+                              SPLIT BILL
+                            </div>
                             <div className="flex justify-between">
-                              <span>Dibayar</span>
+                              <span className="uppercase">{(selectedOrder as any).payment_method}</span>
                               <span>{formatCurrency((selectedOrder as any).paid_amount)}</span>
                             </div>
-                            {(selectedOrder as any).change_amount && (
+                            <div className="flex justify-between">
+                              <span className="uppercase">{(selectedOrder as any).second_payment_method}</span>
+                              <span>{formatCurrency((selectedOrder as any).second_paid_amount)}</span>
+                            </div>
+                            {Number((selectedOrder as any).change_amount) > 0 && (
+                              <div className="flex justify-between font-semibold mt-0.5 border-t border-dashed border-black/30 pt-0.5">
+                                <span>Kembalian</span>
+                                <span>{formatCurrency((selectedOrder as any).change_amount)}</span>
+                              </div>
+                            )}
+                          </>
+                        ) : (selectedOrder as any).paid_amount ? (
+                          <>
+                            <div className="flex justify-between">
+                              <span>Dibayar ({(selectedOrder as any).payment_method?.toUpperCase()})</span>
+                              <span>{formatCurrency((selectedOrder as any).paid_amount)}</span>
+                            </div>
+                            {Number((selectedOrder as any).change_amount) > 0 && (
                               <div className="flex justify-between font-semibold">
                                 <span>Kembalian</span>
                                 <span>{formatCurrency((selectedOrder as any).change_amount)}</span>
                               </div>
                             )}
                           </>
-                        )}
+                        ) : null}
                       </div>
 
                       {/* Footer */}
@@ -1674,7 +2526,7 @@ export default function ReportsPage() {
                     <h4 className="font-semibold mb-3">Bukti yang Sudah Diupload ({selectedProofOrder.payment_proof.length})</h4>
                     <div className="grid grid-cols-2 gap-3">
                       {selectedProofOrder.payment_proof.map((proof: string, index: number) => {
-                        const imageUrl = `/storage/${proof}`;
+                        const imageUrl = `${import.meta.env.VITE_API_URL || ''}/storage/${proof}`;
                         console.log('Image URL:', imageUrl);
                         return (
                           <div key={index} className="relative group">
@@ -1803,7 +2655,7 @@ export default function ReportsPage() {
                 <div className="flex justify-center mb-1">
                   {selectedOrder.store?.image ? (
                     <img
-                      src={`/storage/${selectedOrder.store.image}`}
+                      src={`${import.meta.env.VITE_API_URL || ''}/storage/${selectedOrder.store.image}`}
                       alt="Store Logo"
                       className="w-12 h-12 object-cover rounded-full"
                     />
@@ -1859,20 +2711,40 @@ export default function ReportsPage() {
                   <span>TOTAL</span>
                   <span>{formatCurrency(selectedOrder.total)}</span>
                 </div>
-                {(selectedOrder as any).paid_amount && (
+                {(selectedOrder as any).second_payment_method ? (
                   <>
+                    <div className="text-center font-bold mt-1 mb-0.5 pt-0.5 border-t border-dashed border-black/30">
+                      SPLIT BILL
+                    </div>
                     <div className="flex justify-between">
-                      <span>Dibayar</span>
+                      <span className="uppercase">{(selectedOrder as any).payment_method}</span>
                       <span>{formatCurrency((selectedOrder as any).paid_amount)}</span>
                     </div>
-                    {(selectedOrder as any).change_amount && (
+                    <div className="flex justify-between">
+                      <span className="uppercase">{(selectedOrder as any).second_payment_method}</span>
+                      <span>{formatCurrency((selectedOrder as any).second_paid_amount)}</span>
+                    </div>
+                    {Number((selectedOrder as any).change_amount) > 0 && (
+                      <div className="flex justify-between font-semibold mt-0.5 border-t border-dashed border-black/30 pt-0.5">
+                        <span>Kembalian</span>
+                        <span>{formatCurrency((selectedOrder as any).change_amount)}</span>
+                      </div>
+                    )}
+                  </>
+                ) : (selectedOrder as any).paid_amount ? (
+                  <>
+                    <div className="flex justify-between">
+                      <span>Dibayar ({(selectedOrder as any).payment_method?.toUpperCase()})</span>
+                      <span>{formatCurrency((selectedOrder as any).paid_amount)}</span>
+                    </div>
+                    {Number((selectedOrder as any).change_amount) > 0 && (
                       <div className="flex justify-between font-semibold">
                         <span>Kembalian</span>
                         <span>{formatCurrency((selectedOrder as any).change_amount)}</span>
                       </div>
                     )}
                   </>
-                )}
+                ) : null}
               </div>
 
               <div className="text-center text-[10px] pt-1 border-t border-dashed border-black">

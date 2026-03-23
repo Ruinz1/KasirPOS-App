@@ -245,6 +245,8 @@ class OrderController extends Controller
             'payment_status' => 'required|in:paid,pending',
             'payment_method' => 'sometimes|in:cash,card,qris',
             'paid_amount' => 'nullable|numeric|min:0',
+            'second_payment_method' => 'nullable|in:cash,card,qris',
+            'second_paid_amount' => 'nullable|numeric|min:0',
         ]);
 
         // Determine contexts
@@ -252,50 +254,55 @@ class OrderController extends Controller
         $incomingAmount = (float)($validated['paid_amount'] ?? 0);
         $totalBill = (float)$order->total;
         
-        // LOGIC:
-        // Case A: First Payment (CurrentPaid == 0)
-        // -> Set payment_method = input. Set paid_amount = input.
-        
-        // Case B: Add-on Payment (CurrentPaid > 0 AND CurrentPaid < Total)
-        // -> Keep payment_method (primary). Set second_payment_method = input. Set second_paid_amount = input.
-        // -> BUT check if user is trying to "Replace" the payment (e.g. paying Full Total again)?
-        //    If incoming >= TotalBill, assume Replace/Full Payment.
-        
-        // Case C: Paying same method? Just accumulate? No, user wants split methods shown.
-        
         $totalPaidAfter = 0;
 
-        if ($currentPaid > 0 && $incomingAmount < $totalBill && ($currentPaid + $incomingAmount >= $totalBill - 100)) {
-             // SPLIT PAYMENT CONTEXT
-             // Condition: Already paid something. Incoming is NOT full amount. Sum covers total.
-             
-             if ($request->has('payment_method')) {
-                  $order->second_payment_method = $validated['payment_method'];
-             }
-             $order->second_paid_amount = $incomingAmount;
-             
-             // Primary payment method/amount remains untouched!
-             $totalPaidAfter = $currentPaid + $incomingAmount;
-             
+        // CHECK EXPLICIT SPLIT BILL DARI REQUEST
+        if ($request->has('second_paid_amount')) {
+            if ($request->has('payment_method')) {
+                $order->payment_method = $validated['payment_method'];
+            }
+            $order->paid_amount = $incomingAmount;
+
+            if ($request->has('second_payment_method')) {
+                $order->second_payment_method = $validated['second_payment_method'];
+            }
+            $order->second_paid_amount = (float)$validated['second_paid_amount'];
+
+            $totalPaidAfter = $incomingAmount + (float)$validated['second_paid_amount'];
         } else {
-             // FULL PAYMENT / FIRST PAYMENT / OVERWRITE CONTEXT
-             // Either first time pay, or user puts full money to overwrite previous.
-             
-             if ($request->has('payment_method')) {
-                 $order->payment_method = $validated['payment_method'];
-             }
-             
-             // If this is an overwrite, we should clear secondary to avoid zombie data?
-             if ($incomingAmount >= $totalBill) {
-                  $order->second_payment_method = null;
-                  $order->second_paid_amount = null;
-                  $order->paid_amount = $incomingAmount;
-                  $totalPaidAfter = $incomingAmount;
-             } else {
-                  // Partial Primary Payment
-                  $order->paid_amount = $incomingAmount;
-                  $totalPaidAfter = $incomingAmount;
-             }
+            // AUTOMATIC ADD-ON PAYMENT LOGIC 
+            if ($currentPaid > 0 && $incomingAmount < $totalBill && ($currentPaid + $incomingAmount >= $totalBill - 100)) {
+                 // SPLIT PAYMENT CONTEXT (Auto fallback)
+                 // Condition: Already paid something. Incoming is NOT full amount. Sum covers total.
+                 
+                 if ($request->has('payment_method')) {
+                      $order->second_payment_method = $validated['payment_method'];
+                 }
+                 $order->second_paid_amount = $incomingAmount;
+                 
+                 // Primary payment method/amount remains untouched!
+                 $totalPaidAfter = $currentPaid + $incomingAmount;
+                 
+            } else {
+                 // FULL PAYMENT / FIRST PAYMENT / OVERWRITE CONTEXT
+                 // Either first time pay, or user puts full money to overwrite previous.
+                 
+                 if ($request->has('payment_method')) {
+                     $order->payment_method = $validated['payment_method'];
+                 }
+                 
+                 // If this is an overwrite, we should clear secondary to avoid zombie data
+                 if ($incomingAmount >= $totalBill) {
+                      $order->second_payment_method = null;
+                      $order->second_paid_amount = null;
+                      $order->paid_amount = $incomingAmount;
+                      $totalPaidAfter = $incomingAmount;
+                 } else {
+                      // Partial Primary Payment
+                      $order->paid_amount = $incomingAmount;
+                      $totalPaidAfter = $incomingAmount;
+                 }
+            }
         }
         
         // Update Status based on Total Paid
@@ -433,12 +440,21 @@ class OrderController extends Controller
 
             // Adjust Payment Status
             if ($order->payment_status === 'paid') {
-                 if ($order->paid_amount < $total) {
+                 // Because they already received their change_amount previously, we bake it into paid_amount
+                 // so the store only formally holds the exact original bill amount.
+                 if ((float)$order->change_amount > 0) {
+                     $order->paid_amount = (float)$order->paid_amount - (float)$order->change_amount;
+                     $order->change_amount = 0;
+                 }
+                 
+                 $effectivePaid = (float)$order->paid_amount + (float)$order->second_paid_amount;
+                 
+                 if ($effectivePaid < $total) {
                      // Total increased beyond what was paid -> Pending (Must pay difference)
                      $order->payment_status = 'pending'; 
                  } else {
                      // Still covered, update change
-                     $order->change_amount = $order->paid_amount - $total;
+                     $order->change_amount = $effectivePaid - $total;
                  }
             }
 
@@ -540,18 +556,9 @@ class OrderController extends Controller
             $order->profit = $total - $cogs;
 
             // Check if queue status needs reset
-            // Rule: If any added item is Food or Drink (not Snack), and queue is completed, reset to pending.
-            // Assuming categories are strings.
             $shouldResetQueue = false;
             foreach ($addedItems as $addedItem) {
                 $category = strtolower($addedItem->menuItem->category ?? '');
-                // "makanan" or "minuman" or "non-kopi" etc. basically anything not just "snack"?
-                // Or user said: "jika makanan atau minuman, dan bukan snack"
-                // Let's assume strict check: NOT 'snack' is broad. 
-                // Better be safe: Reset if it's 'makanan' or 'minuman' or similar. 
-                // Or simply: if category != 'snack'.
-                
-                // User request: Only reappear in queue if adding Food or Drink.
                 if (in_array($category, ['makanan', 'minuman'])) {
                      $shouldResetQueue = true;
                      break;
@@ -561,29 +568,34 @@ class OrderController extends Controller
             if ($shouldResetQueue) {
                  if ($order->queue_status === 'completed' || $order->queue_status === 'in_progress') {
                      $order->queue_status = 'pending';
-                     // $order->queue_completed_at = null; // Keep completion time to track "Reactivated" state
                  }
             }
 
             // Adjust Payment Status
-            // If it was Paid or Pending, it might become Pending (Underpaid)
             if ($order->payment_status === 'paid') {
-                 if ($order->paid_amount < $total) {
+                 // Because they already received their change_amount previously, we bake it into paid_amount
+                 // so the store only formally holds the exact original bill amount.
+                 if ((float)$order->change_amount > 0) {
+                     $order->paid_amount = (float)$order->paid_amount - (float)$order->change_amount;
+                     $order->change_amount = 0;
+                 }
+                 
+                 $effectivePaid = (float)$order->paid_amount + (float)$order->second_paid_amount;
+                 
+                 if ($effectivePaid < $total) {
                      // Total increased beyond what was paid -> Pending (Must pay difference)
                      $order->payment_status = 'pending'; 
+                 } else {
+                     // Still covered, update change
+                     $order->change_amount = $effectivePaid - $total;
                  }
-            } 
-            // If it was already pending, it stays pending (Change stays 0)
-            
-            // Recalculate change if paid_amount exists
-            if ($order->paid_amount >= $order->total) {
-                $order->change_amount = $order->paid_amount - $order->total;
-                // If it was previously pending but now fully paid (maybe they added prepaid items? unlikely but logic holds)
-                if ($order->payment_status === 'pending') {
-                     $order->payment_status = 'paid';
-                }
-            } else {
-                $order->change_amount = 0;
+            } else if ($order->payment_status === 'pending') {
+                 // If it's already pending, we shouldn't zero out everything blindly unless needed,
+                 // but if there IS a change_amount (unlikely if pending), we'd bake it.
+                 if ((float)$order->change_amount > 0) {
+                     $order->paid_amount = (float)$order->paid_amount - (float)$order->change_amount;
+                     $order->change_amount = 0;
+                 }
             }
 
             $order->save();

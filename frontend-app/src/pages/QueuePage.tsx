@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, Pencil } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
 
 interface OrderItem {
     id: number;
@@ -41,6 +42,11 @@ interface QueueOrder {
         name: string;
     };
     queue_completed_at: string | null;
+    payment_status: "pending" | "paid";
+    payment_method?: string;
+    paid_amount?: number;
+    second_paid_amount?: number;
+    change_amount?: number;
     table?: {
         id: number;
         table_number: string;
@@ -84,6 +90,8 @@ const QueuePage = () => {
     const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
     const { toast } = useToast();
     const prevOrdersRef = useRef<QueueOrder[]>([]);
+    const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
+    const [showEditDialog, setShowEditDialog] = useState(false);
 
     // Helper: Apakah order ini harus disembunyikan dari antrian?
     // Order tersembunyi HANYA jika SEMUA section yang ada sudah selesai:
@@ -793,11 +801,32 @@ const QueuePage = () => {
                                         )}
 
                                         {/* Total */}
-                                        <div className="mt-1 pt-2 border-t flex justify-between items-center">
-                                            <span className="text-xs font-semibold">Total:</span>
-                                            <span className="text-sm font-bold text-primary">
-                                                {formatCurrency(order.total)}
-                                            </span>
+                                        <div className="mt-1 pt-2 border-t">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-xs font-semibold">Total Tagihan:</span>
+                                                <span className="text-sm font-bold text-primary">
+                                                    {formatCurrency(order.total)}
+                                                </span>
+                                            </div>
+                                            {(order.paid_amount || 0) > 0 && order.payment_status === 'pending' && (
+                                                <>
+                                                    <div className="flex justify-between items-center text-muted-foreground mt-1">
+                                                        <span className="text-[10px]">Telah Dibayar{order.payment_method ? ` (${order.payment_method})` : ''}:</span>
+                                                        <span className="text-[10px]">- {formatCurrency(((order.paid_amount || 0) + (order.second_paid_amount || 0)) - (order.change_amount || 0))}</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center mt-1 border-t border-dashed pt-1">
+                                                        <span className="text-xs font-bold text-orange-600">Sisa Bayar:</span>
+                                                        <span className="text-sm font-bold text-orange-600">
+                                                            {formatCurrency(Math.max(0, order.total - (((order.paid_amount || 0) + (order.second_paid_amount || 0)) - (order.change_amount || 0))))}
+                                                        </span>
+                                                    </div>
+                                                </>
+                                            )}
+                                            {(order.paid_amount || 0) > 0 && order.payment_status === 'paid' && (
+                                                <div className="mt-1 text-center">
+                                                    <Badge className="bg-green-500 hover:bg-green-600 text-[10px] py-0">LUNAS</Badge>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Notes Section - Catatan */}
@@ -853,11 +882,25 @@ const QueuePage = () => {
                                             )}
                                         </div>
 
-                                        {/* Kasir Info */}
-                                        <div className="mt-2 pt-2 border-t">
+                                        {/* Kasir Info + Edit Button */}
+                                        <div className="mt-2 pt-2 border-t flex items-center justify-between">
                                             <p className="text-xs text-muted-foreground truncate" title={`Kasir: ${order.user.name}`}>
                                                 Kasir: {order.user.name}
                                             </p>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setEditingOrder(order);
+                                                    setShowEditDialog(true);
+                                                }}
+                                                title="Edit pesanan"
+                                            >
+                                                <Pencil className="h-3 w-3" />
+                                                Edit
+                                            </Button>
                                         </div>
                                     </CardContent>
                                 </Card>
@@ -866,6 +909,22 @@ const QueuePage = () => {
                     </div>
                 )}
             </div>
+
+            {/* Edit Order Dialog */}
+            <EditQueueOrderDialog
+                open={showEditDialog}
+                onOpenChange={(open) => {
+                    setShowEditDialog(open);
+                    if (!open) setEditingOrder(null);
+                }}
+                order={editingOrder}
+                onSuccess={() => {
+                    // Force re-fetch to get updated data
+                    prevOrdersRef.current = [];
+                    fetchQueue();
+                    fetchStatistics();
+                }}
+            />
         </MainLayout>
     );
 };

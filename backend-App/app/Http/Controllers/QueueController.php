@@ -264,4 +264,28 @@ class QueueController extends Controller
             'total_in_queue' => $pending + $inProgress,
         ]);
     }
+
+    /**
+     * Revert completed order back to queue
+     */
+    public function revertToQueue($id)
+    {
+        $order = Order::findOrFail($id);
+        
+        // Check if user has access to this store
+        $user = Auth::user();
+        if ($user->role !== 'admin' && $order->store_id !== $user->store_id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $order->queue_status = 'pending';
+        $order->drink_queue_status = 'pending';
+        $order->queue_completed_at = null;
+        $order->save();
+
+        return response()->json([
+            'message' => 'Order dikembalikan ke antrian',
+            'order' => $order->load(['items.menuItem', 'user', 'table'])
+        ]);
+    }
 }

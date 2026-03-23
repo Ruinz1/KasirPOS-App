@@ -70,6 +70,7 @@ class InventoryController extends Controller
             // Equipment fields
             'status' => 'nullable|string|max:255',        // Baik, Rusak, Maintenance
             'description' => 'nullable|string',           // Keterangan
+            'quantity' => 'nullable|integer|min:1',       // Jumlah unit
         ]);
         
         // Calculate price_per_unit from total_price for stock items
@@ -120,6 +121,7 @@ class InventoryController extends Controller
             'store_id' => 'nullable|exists:stores,id',
             'status' => 'nullable|string|max:255',
             'description' => 'nullable|string',
+            'quantity' => 'nullable|integer|min:1',
         ]);
 
         // Recalculate price_per_unit if total_price or current_stock changed for stock items

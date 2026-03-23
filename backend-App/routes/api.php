@@ -71,6 +71,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/queue/{id}/status', [QueueController::class, 'updateStatus']);
     Route::put('/queue/{id}/drink-status', [QueueController::class, 'updateDrinkStatus']);
     Route::put('/queue/{id}/notes', [QueueController::class, 'updateNotes']);
+    Route::post('/queue/{id}/revert', [QueueController::class, 'revertToQueue']);
 
     // Order History routes
     Route::get('/order-history', [OrderHistoryController::class, 'index']);
@@ -86,6 +87,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/daily-shopping/export', [DailyShoppingController::class, 'export']);
     Route::put('/daily-shopping/{id}', [DailyShoppingController::class, 'update']);
     Route::get('/daily-shopping/monthly-recap', [DailyShoppingController::class, 'monthlyRecap']);
+    Route::get('/daily-shopping/range', [DailyShoppingController::class, 'rangeTotal']);
 
     // Employee routes
     Route::get('/employees', [EmployeeController::class, 'index']);

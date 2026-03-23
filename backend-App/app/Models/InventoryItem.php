@@ -23,6 +23,7 @@ class InventoryItem extends Model
         'store_id',
         'status',        // For equipment: Baik, Rusak, Maintenance, etc.
         'description',   // Additional notes/description
+        'quantity',      // Jumlah unit untuk equipment
     ];
 
     /**
@@ -38,6 +39,7 @@ class InventoryItem extends Model
         'price_per_unit' => 'decimal:2',
         'min_stock' => 'decimal:2',
         'total_price' => 'decimal:2',
+        'quantity' => 'integer',
     ];
 
     /**

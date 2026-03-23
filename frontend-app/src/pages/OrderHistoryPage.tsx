@@ -13,7 +13,8 @@ import {
     Calendar,
     ChevronDown,
     ChevronUp,
-    Volume2
+    Volume2,
+    Undo2
 } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import {
@@ -145,6 +146,26 @@ const OrderHistoryPage = () => {
             newExpanded.add(orderId);
         }
         setExpandedOrders(newExpanded);
+    };
+
+    const handleRevertToQueue = async (orderId: number) => {
+        try {
+            await api.post(`/queue/${orderId}/revert`);
+            toast({
+                title: "Berhasil",
+                description: "Pesanan dikembalikan ke antrian",
+                className: "bg-green-600 text-white border-none",
+            });
+            fetchOrders();
+            fetchStatistics();
+        } catch (error) {
+            console.error("Error reverting order:", error);
+            toast({
+                title: "Error",
+                description: "Gagal mengembalikan pesanan ke antrian",
+                variant: "destructive",
+            });
+        }
     };
 
     const formatCurrency = (amount: number) => {
@@ -384,7 +405,23 @@ const OrderHistoryPage = () => {
                                                     {/* Footer Info */}
                                                     <div className="flex justify-between items-center pt-3 border-t text-sm text-muted-foreground">
                                                         <span>Kasir: {order.user.name}</span>
-                                                        <span>{formatDate(order.created_at)}</span>
+                                                        <div className="flex items-center gap-4">
+                                                            {order.status !== 'cancelled' && (
+                                                                <Button 
+                                                                    size="sm" 
+                                                                    variant="outline" 
+                                                                    className="h-8 text-orange-600 border-orange-200 hover:bg-orange-50 hover:text-orange-700"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleRevertToQueue(order.id);
+                                                                    }}
+                                                                >
+                                                                    <Undo2 className="h-3 w-3 mr-1" />
+                                                                    Kembali ke Antrian
+                                                                </Button>
+                                                            )}
+                                                            <span>{formatDate(order.created_at)}</span>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             )}

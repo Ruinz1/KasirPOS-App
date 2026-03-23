@@ -105,6 +105,7 @@ const DailyShoppingPage = () => {
     const [priceInputMode, setPriceInputMode] = useState<'total' | 'unit'>('total');
     const [editingItem, setEditingItem] = useState<ShoppingItem | null>(null);
     const [isEditOpen, setIsEditOpen] = useState(false);
+    const [rowsToAdd, setRowsToAdd] = useState<number>(1);
 
     const fetchInventory = async () => {
         try {
@@ -240,7 +241,11 @@ const DailyShoppingPage = () => {
 
     // Batch Form Handlers
     const handleAddItemRow = () => {
-        setFormItems([...formItems, { item_name: "", quantity: "", unit: "pcs", price_per_unit: "", total_price: "", notes: "", inventory_item_id: "" }]);
+        const count = Math.max(1, Math.min(rowsToAdd, 50)); // batasi maksimal 50 baris sekaligus
+        const newRows = Array.from({ length: count }, () => ({
+            item_name: "", quantity: "", unit: "pcs", price_per_unit: "", total_price: "", notes: "", inventory_item_id: ""
+        }));
+        setFormItems([...formItems, ...newRows]);
     };
 
     const handleRemoveItemRow = (index: number) => {
@@ -261,7 +266,8 @@ const DailyShoppingPage = () => {
             if (priceInputMode === 'total' && item.total_price) {
                 const total = parseFloat(item.total_price);
                 if (!isNaN(total)) {
-                    newItems[index].price_per_unit = (total / qty).toFixed(2); // approximate
+                    // Bulatkan ke integer — tampilan harga satuan tidak perlu presisi desimal
+                    newItems[index].price_per_unit = Math.round(total / qty).toString();
                 }
             } else if (priceInputMode === 'unit' && item.price_per_unit) {
                 const unitPrice = parseFloat(item.price_per_unit);
@@ -272,7 +278,8 @@ const DailyShoppingPage = () => {
         } else if (field === 'total_price' && priceInputMode === 'total') {
             const total = parseFloat(value);
             if (!isNaN(total) && !isNaN(qty) && qty > 0) {
-                newItems[index].price_per_unit = (total / qty).toFixed(2);
+                // Bulatkan ke integer
+                newItems[index].price_per_unit = Math.round(total / qty).toString();
             }
         } else if (field === 'price_per_unit' && priceInputMode === 'unit') {
             const unitPrice = parseFloat(value);
@@ -307,14 +314,33 @@ const DailyShoppingPage = () => {
             const token = localStorage.getItem("token");
 
             // Format items for backend
-            const formattedItems = formItems.map(item => ({
-                ...item,
-                quantity: parseFloat(item.quantity),
-                price_per_unit: parseFloat(item.price_per_unit),
-                inventory_item_id: item.inventory_item_id ? parseInt(item.inventory_item_id) : null,
-                // Include user_id in each item if selected, as backend might expect it there
-                user_id: selectedBuyer ? parseInt(selectedBuyer) : null
-            }));
+            const formattedItems = formItems.map(item => {
+                const qty = parseFloat(item.quantity);
+                const totalPrice = parseFloat(item.total_price);
+                const unitPrice = parseFloat(item.price_per_unit);
+
+                let finalTotalPrice: number;
+                let finalUnitPrice: number;
+
+                if (priceInputMode === 'total') {
+                    // Gunakan total_price yang diinput user (47000 tetap 47000, bukan 46999.92)
+                    finalTotalPrice = isNaN(totalPrice) ? 0 : Math.round(totalPrice);
+                    finalUnitPrice = (!isNaN(qty) && qty > 0) ? Math.round(finalTotalPrice / qty) : (isNaN(unitPrice) ? 0 : Math.round(unitPrice));
+                } else {
+                    // Mode satuan: hitung total dari price_per_unit × qty
+                    finalUnitPrice = isNaN(unitPrice) ? 0 : Math.round(unitPrice);
+                    finalTotalPrice = (!isNaN(qty) && qty > 0) ? Math.round(finalUnitPrice * qty) : (isNaN(totalPrice) ? 0 : Math.round(totalPrice));
+                }
+
+                return {
+                    ...item,
+                    quantity: qty,
+                    price_per_unit: finalUnitPrice,
+                    total_price: finalTotalPrice,
+                    inventory_item_id: item.inventory_item_id ? parseInt(item.inventory_item_id) : null,
+                    user_id: selectedBuyer ? parseInt(selectedBuyer) : null
+                };
+            });
 
             const payload: any = {
                 shopping_date: selectedDate,
@@ -733,13 +759,14 @@ const DailyShoppingPage = () => {
                                                     <TableRow key={index}>
                                                         <TableCell>
                                                             <Select
-                                                                value={item.inventory_item_id}
-                                                                onValueChange={(val) => handleItemChange(index, 'inventory_item_id', val)}
+                                                                value={item.inventory_item_id || 'none'}
+                                                                onValueChange={(val) => handleItemChange(index, 'inventory_item_id', val === 'none' ? '' : val)}
                                                             >
                                                                 <SelectTrigger>
                                                                     <SelectValue placeholder="Pilih..." />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
+                                                                    <SelectItem value="none">— Tidak Dipilih —</SelectItem>
                                                                     {inventoryItems.map((inv) => (
                                                                         <SelectItem key={inv.id} value={inv.id.toString()}>
                                                                             {inv.name} ({inv.current_stock} {inv.unit})
@@ -830,10 +857,22 @@ const DailyShoppingPage = () => {
                                     </div >
 
                                     <div className="flex justify-between items-center">
-                                        <Button type="button" variant="outline" onClick={handleAddItemRow}>
-                                            <Plus className="w-4 h-4 mr-2" />
-                                            Tambah Baris
-                                        </Button>
+                                        <div className="flex items-center gap-2">
+                                            <Button type="button" variant="outline" onClick={handleAddItemRow}>
+                                                <Plus className="w-4 h-4 mr-2" />
+                                                Tambah Baris
+                                            </Button>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={50}
+                                                value={rowsToAdd}
+                                                onChange={(e) => setRowsToAdd(Math.max(1, Math.min(50, parseInt(e.target.value) || 1)))}
+                                                className="w-16 h-9 text-center border border-input rounded-md bg-background text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring"
+                                                title="Jumlah baris yang ditambahkan"
+                                            />
+                                            <span className="text-sm text-muted-foreground">baris</span>
+                                        </div>
                                         <div className="space-x-2">
                                             <Button type="button" variant="ghost" onClick={() => setIsDialogOpen(false)}>Batal</Button>
                                             <Button type="submit">Simpan Semua</Button>

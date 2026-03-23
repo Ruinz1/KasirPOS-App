@@ -87,9 +87,11 @@ interface Order {
   cogs: number;
   profit: number;
   payment_method: string;
+  status?: string;
   payment_status?: 'paid' | 'pending';
   order_type?: 'dine_in' | 'takeaway';
   paid_amount?: number;
+  second_paid_amount?: number;
   change_amount?: number;
   initial_cash?: number;
   created_at: string;
@@ -232,7 +234,7 @@ export default function POSPage() {
         setStoreInfo({
           name: selected.name,
           address: selected.location || '',
-          image: (selected as any).image ? `/storage/${(selected as any).image}` : undefined
+          image: (selected as any).image ? (selected as any).image : undefined
         });
       }
       fetchMenuItems();
@@ -246,7 +248,7 @@ export default function POSPage() {
       setStoreInfo({
         name: res.data.name,
         address: res.data.location || '',
-        image: res.data.image ? `/storage/${res.data.image}` : undefined
+        image: res.data.image ? res.data.image : undefined
       });
     } catch (err) {
       console.error("Failed to fetch store info", err);
@@ -816,18 +818,14 @@ export default function POSPage() {
       // If payment meets Full Total threshold, treat as Full Re-Payment (Reset).
       // If payment is Add-on, include Previous.
 
-      const prevTotalPaid = settlingOrder.paid_amount || 0;
-      const prevChange = settlingOrder.change_amount || 0;
-      const effectivePrevPaid = prevTotalPaid - prevChange;
+      const prevTotalPaid = (settlingOrder.paid_amount || 0) + (settlingOrder.second_paid_amount || 0) - (settlingOrder.change_amount || 0);
+      const remaining = Math.max(0, settlingOrder.total - prevTotalPaid);
 
-      const currentInput = paidAmount ? parseFloat(paidAmount) : (settlingOrder.total - effectivePrevPaid);
-      const isFullPaymentMode = currentInput >= (settlingOrder.total - 100);
-
-      const totalPaidCorrected = isFullPaymentMode ? currentInput : (effectivePrevPaid + currentInput);
+      const currentInput = paidAmount ? parseFloat(paidAmount) : remaining;
 
       // For cash payment, check if amount is sufficient
-      if (paymentMethod === 'cash' && totalPaidCorrected < settlingOrder.total) {
-        toast.error('Uang yang dibayar kurang dari total tagihan');
+      if (paymentMethod === 'cash' && currentInput < remaining) {
+        toast.error('Uang yang dibayar kurang dari sisa tagihan');
         return;
       }
 
@@ -1070,6 +1068,20 @@ export default function POSPage() {
                           {formatCurrency(settlingOrder.total)}
                         </span>
                       </div>
+                      
+                      {((settlingOrder.paid_amount || 0) + (settlingOrder.second_paid_amount || 0)) > 0 && (
+                        <div className="mt-2 pt-2 border-t border-primary/20 space-y-1">
+                          <div className="flex justify-between items-center text-sm">
+                            <span className="font-semibold text-muted-foreground">Telah Dibayar:</span>
+                            <span className="font-bold text-muted-foreground">- {formatCurrency(((settlingOrder.paid_amount || 0) + (settlingOrder.second_paid_amount || 0)) - (settlingOrder.change_amount || 0))}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-sm text-red-600">
+                            <span className="font-bold">Sisa Pembayaran:</span>
+                            <span className="font-bold text-lg">{formatCurrency(Math.max(0, settlingOrder.total - (((settlingOrder.paid_amount || 0) + (settlingOrder.second_paid_amount || 0)) - (settlingOrder.change_amount || 0))))}</span>
+                          </div>
+                        </div>
+                      )}
+
                       {settlingOrder.items.length > 1 && (
                         <p className="text-xs text-muted-foreground mt-2 text-right">
                           {settlingOrder.items.length} item · {settlingOrder.items.reduce((sum, item) => sum + item.quantity, 0)} porsi
@@ -1079,10 +1091,14 @@ export default function POSPage() {
                   </div>
 
                   {/* Split Bill Toggle */}
-                  <div className="flex items-center justify-center gap-3 p-4 bg-muted/30 rounded-xl">
+                  <div className={`flex items-center justify-center gap-3 p-4 rounded-xl ${((settlingOrder.paid_amount || 0) > 0) ? 'bg-muted/10 opacity-60' : 'bg-muted/30'}`}>
                     <span className="text-sm font-medium">Pembayaran Tunggal</span>
                     <button
                       onClick={() => {
+                        if ((settlingOrder.paid_amount || 0) > 0) {
+                          toast.error('Pesanan tambahan tidak dapat di-split bill lagi');
+                          return;
+                        }
                         setIsSplitBill(!isSplitBill);
                         if (!isSplitBill) {
                           // Reset amounts when enabling split
@@ -1094,7 +1110,8 @@ export default function POSPage() {
                         }
                       }}
                       className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${isSplitBill ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-                        }`}
+                        } ${((settlingOrder.paid_amount || 0) > 0) ? 'cursor-not-allowed' : ''}`}
+                      disabled={((settlingOrder.paid_amount || 0) > 0)}
                     >
                       <span
                         className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${isSplitBill ? 'translate-x-8' : 'translate-x-1'
@@ -1171,9 +1188,11 @@ export default function POSPage() {
                           {/* Change Display */}
                           {(() => {
                             const current = parseFloat(paidAmount || '0');
-                            const change = current - settlingOrder.total;
+                            const prevPaid = (settlingOrder.paid_amount || 0) + (settlingOrder.second_paid_amount || 0) - (settlingOrder.change_amount || 0);
+                            const remaining = Math.max(0, settlingOrder.total - prevPaid);
+                            const change = current - remaining;
 
-                            if (paidAmount && current >= settlingOrder.total) {
+                            if (paidAmount && current >= remaining) {
                               return (
                                 <div className="p-4 bg-success/10 rounded-xl border-2 border-success/30">
                                   <div className="flex justify-between items-center">
@@ -1185,7 +1204,7 @@ export default function POSPage() {
                                 </div>
                               );
                             }
-                            if (paidAmount && current < settlingOrder.total) {
+                            if (paidAmount && current < remaining) {
                               return (
                                 <p className="text-sm text-destructive font-medium">
                                   Masih kurang: {formatCurrency(Math.abs(change))}
@@ -1201,7 +1220,7 @@ export default function POSPage() {
                       <button
                         className="btn-primary w-full py-4 text-lg font-bold flex items-center justify-center gap-2 shadow-lg"
                         onClick={confirmSettlement}
-                        disabled={paymentMethod === 'cash' && parseFloat(paidAmount || '0') < settlingOrder.total}
+                        disabled={paymentMethod === 'cash' && parseFloat(paidAmount || '0') < Math.max(0, settlingOrder.total - (((settlingOrder.paid_amount || 0) + (settlingOrder.second_paid_amount || 0)) - (settlingOrder.change_amount || 0)))}
                       >
                         <Check className="w-6 h-6" />
                         Konfirmasi Pembayaran
@@ -1477,6 +1496,7 @@ export default function POSPage() {
                             // Send split payment to backend
                             const payload = {
                               payment_status: 'paid',
+                              status: 'completed',
                               payment_method: splitPayment1Method,
                               paid_amount: amount1,
                               second_payment_method: splitPayment2Method,
@@ -1734,15 +1754,58 @@ export default function POSPage() {
 
         {/* Right - Cart */}
         <div className="w-full md:w-96 bg-card border-l border-border flex flex-col h-[40vh] md:h-full shadow-lg md:shadow-none">
-          <div className="p-6 border-b border-border">
-            <h2 className="font-display font-semibold text-lg">Keranjang</h2>
-            <p className="text-sm text-muted-foreground">{cart.length} item</p>
+          <div className="p-6 border-b border-border flex justify-between items-center bg-card">
+            <div>
+              <h2 className="font-display font-semibold text-lg">Keranjang</h2>
+              <p className="text-sm text-muted-foreground">{cart.length} item</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="flex bg-muted/50 p-1 rounded-lg border border-border shadow-inner">
+                <button
+                  className={`px-3 flex items-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition-all ${
+                    orderType === 'dine_in' 
+                      ? 'bg-white dark:bg-gray-800 text-primary shadow-sm border border-border/50' 
+                      : 'text-muted-foreground hover:bg-secondary'
+                  }`}
+                  onClick={() => setOrderType('dine_in')}
+                >
+                  <Coffee className="w-3.5 h-3.5" />
+                  Dine In
+                </button>
+                <button
+                  className={`px-3 flex items-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition-all ${
+                    orderType === 'takeaway' 
+                      ? 'bg-white dark:bg-gray-800 text-primary shadow-sm border border-border/50' 
+                      : 'text-muted-foreground hover:bg-secondary'
+                  }`}
+                  onClick={() => setOrderType('takeaway')}
+                >
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  Takeaway
+                </button>
+              </div>
+
+              {orderType === 'dine_in' && (
+                <div className="flex items-center justify-end gap-2 pr-1">
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-1">
+                    {useTableSystem ? <Utensils className="w-3 h-3 text-primary" /> : <Clock className="w-3 h-3" />}
+                    {useTableSystem ? 'Meja' : 'Antrian'}
+                  </span>
+                  <button
+                    onClick={() => setUseTableSystem(!useTableSystem)}
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${useTableSystem ? 'bg-primary' : 'bg-muted border border-border'}`}
+                  >
+                    <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform ${useTableSystem ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Customer Name */}
-          <div className="p-4 border-b border-border">
+          <div className="p-4 border-b border-border bg-card/50">
             <Input
-              className="input-coffee"
+              className="input-coffee bg-background"
               placeholder="Nama Pembeli (opsional)"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
@@ -1756,7 +1819,7 @@ export default function POSPage() {
               <div className="text-center py-12 text-muted-foreground">
                 {storeInfo.image ? (
                   <img
-                    src={storeInfo.image}
+                    src={`${import.meta.env.VITE_API_URL || ''}/storage/${storeInfo.image}`}
                     alt="Logo Toko"
                     className="w-20 h-20 mx-auto mb-3 opacity-80 object-contain"
                   />
@@ -1870,7 +1933,28 @@ export default function POSPage() {
                         >
                           <Minus className="w-4 h-4" />
                         </button>
-                        <span className="w-8 text-center font-semibold">{item.quantity}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            if (!isNaN(val) && val > 0) {
+                              updateCartQuantity(cartKey, val);
+                            } else if (e.target.value === '') {
+                              // allow clearing temporarily; onBlur handles final state
+                              updateCartQuantity(cartKey, 0);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const val = parseInt(e.target.value);
+                            if (isNaN(val) || val <= 0) {
+                              removeFromCart(cartKey);
+                            }
+                          }}
+                          onFocus={(e) => e.target.select()}
+                          className="w-12 h-8 text-center font-semibold border border-border rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
                         <button
                           className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center hover:bg-secondary"
                           onClick={() => updateCartQuantity(cartKey, item.quantity + 1)}
@@ -2180,7 +2264,7 @@ export default function POSPage() {
                     <div className="flex justify-center mb-1">
                       {storeInfo.image ? (
                         <img
-                          src={`/storage/${storeInfo.image}`}
+                          src={`${import.meta.env.VITE_API_URL || ''}/storage/${storeInfo.image}`}
                           alt="Store Logo"
                           className="w-12 h-12 object-cover rounded-full"
                         />
@@ -2243,20 +2327,40 @@ export default function POSPage() {
                           <span>TOTAL</span>
                           <span>{formatCurrency(currentOrder.total)}</span>
                         </div>
-                        {(currentOrder as any).paid_amount && (
+                        {(currentOrder as any).second_payment_method ? (
                           <>
+                            <div className="text-center font-bold mt-1 mb-0.5 pt-0.5 border-t border-dashed border-black/30">
+                              SPLIT BILL
+                            </div>
                             <div className="flex justify-between">
-                              <span>Dibayar</span>
+                              <span className="uppercase">{(currentOrder as any).payment_method}</span>
                               <span>{formatCurrency((currentOrder as any).paid_amount)}</span>
                             </div>
-                            {(currentOrder as any).change_amount && (
+                            <div className="flex justify-between">
+                              <span className="uppercase">{(currentOrder as any).second_payment_method}</span>
+                              <span>{formatCurrency((currentOrder as any).second_paid_amount)}</span>
+                            </div>
+                            {Number((currentOrder as any).change_amount) > 0 && (
+                              <div className="flex justify-between font-semibold mt-0.5 border-t border-dashed border-black/30 pt-0.5">
+                                <span>Kembalian</span>
+                                <span>{formatCurrency((currentOrder as any).change_amount)}</span>
+                              </div>
+                            )}
+                          </>
+                        ) : (currentOrder as any).paid_amount ? (
+                          <>
+                            <div className="flex justify-between">
+                              <span>Dibayar ({(currentOrder as any).payment_method?.toUpperCase()})</span>
+                              <span>{formatCurrency((currentOrder as any).paid_amount)}</span>
+                            </div>
+                            {Number((currentOrder as any).change_amount) > 0 && (
                               <div className="flex justify-between font-semibold">
                                 <span>Kembalian</span>
                                 <span>{formatCurrency((currentOrder as any).change_amount)}</span>
                               </div>
                             )}
                           </>
-                        )}
+                        ) : null}
                       </div>
 
                       {/* Footer */}
@@ -2357,7 +2461,7 @@ export default function POSPage() {
               <div className="flex justify-center mb-1">
                 {storeInfo.image ? (
                   <img
-                    src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/storage/${storeInfo.image}`}
+                    src={`${import.meta.env.VITE_API_URL || ''}/storage/${storeInfo.image}`}
                     alt="Store Logo"
                     className="w-16 h-16 object-contain"
                     style={{ maxWidth: '100%', height: 'auto' }}
@@ -2419,20 +2523,40 @@ export default function POSPage() {
                 <span>TOTAL</span>
                 <span>{formatCurrency(currentOrder.total)}</span>
               </div>
-              {(currentOrder as any).paid_amount && (
+              {(currentOrder as any).second_payment_method ? (
                 <>
+                  <div className="text-center font-bold mt-1 mb-0.5 pt-0.5 border-t border-dashed border-black/30">
+                    SPLIT BILL
+                  </div>
                   <div className="flex justify-between">
-                    <span>Dibayar</span>
+                    <span className="uppercase">{(currentOrder as any).payment_method}</span>
                     <span>{formatCurrency((currentOrder as any).paid_amount)}</span>
                   </div>
-                  {(currentOrder as any).change_amount && (
+                  <div className="flex justify-between">
+                    <span className="uppercase">{(currentOrder as any).second_payment_method}</span>
+                    <span>{formatCurrency((currentOrder as any).second_paid_amount)}</span>
+                  </div>
+                  {Number((currentOrder as any).change_amount) > 0 && (
+                    <div className="flex justify-between font-semibold mt-0.5 border-t border-dashed border-black/30 pt-0.5">
+                      <span>Kembalian</span>
+                      <span>{formatCurrency((currentOrder as any).change_amount)}</span>
+                    </div>
+                  )}
+                </>
+              ) : (currentOrder as any).paid_amount ? (
+                <>
+                  <div className="flex justify-between">
+                    <span>Dibayar ({(currentOrder as any).payment_method?.toUpperCase()})</span>
+                    <span>{formatCurrency((currentOrder as any).paid_amount)}</span>
+                  </div>
+                  {Number((currentOrder as any).change_amount) > 0 && (
                     <div className="flex justify-between font-semibold">
                       <span>Kembalian</span>
                       <span>{formatCurrency((currentOrder as any).change_amount)}</span>
                     </div>
                   )}
                 </>
-              )}
+              ) : null}
             </div>
 
             {/* Footer */}

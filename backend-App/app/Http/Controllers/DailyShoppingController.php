@@ -235,6 +235,48 @@ class DailyShoppingController extends Controller
         ]);
     }
 
+    // Get total belanja untuk range tanggal (digunakan di laporan)
+    public function rangeTotal(Request $request)
+    {
+        $user = $request->user();
+        $startDate = $request->input('start_date', now()->format('Y-m-d'));
+        $endDate = $request->input('end_date', $startDate);
+
+        $storeId = $user->role === 'admin' && $request->has('store_id')
+            ? $request->input('store_id')
+            : $user->store_id;
+
+        // Total keseluruhan untuk range
+        $totalForRange = DailyShopping::where('store_id', $storeId)
+            ->whereBetween('shopping_date', [$startDate, $endDate])
+            ->sum('total_price');
+
+        // Per hari dalam range
+        // Gunakan DB::raw('DATE(shopping_date)') agar hasilnya string YYYY-MM-DD murni,
+        // tidak dipengaruhi cast model ($casts = ['shopping_date' => 'date']) yang bisa mengembalikan Carbon/ISO format.
+        $perDay = DailyShopping::where('store_id', $storeId)
+            ->whereBetween('shopping_date', [$startDate, $endDate])
+            ->select(
+                DB::raw('DATE(shopping_date) as date_str'),
+                DB::raw('SUM(total_price) as daily_total'),
+                DB::raw('COUNT(*) as item_count')
+            )
+            ->groupBy('date_str')
+            ->orderBy('date_str', 'asc')
+            ->get()
+            ->map(fn($row) => [
+                'date' => $row->date_str, // sudah berformat YYYY-MM-DD (string)
+                'total' => (float) $row->daily_total,
+                'item_count' => (int) $row->item_count,
+            ]);
+
+
+        return response()->json([
+            'total' => (float) $totalForRange,
+            'per_day' => $perDay,
+        ]);
+    }
+
     // Export daily shopping to Excel
     public function export(Request $request)
     {

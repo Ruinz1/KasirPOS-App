@@ -59,7 +59,7 @@ export default function StorePage() {
         if (store) {
             setFormData({ name: store.name, location: store.location || '' });
             if (store.image) {
-                setPreviewUrl(`/storage/${store.image}`);
+                setPreviewUrl(`${import.meta.env.VITE_API_URL || ''}/storage/${store.image}`);
             }
         }
     }, [store]);
