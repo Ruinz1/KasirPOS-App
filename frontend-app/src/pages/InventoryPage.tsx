@@ -61,6 +61,8 @@ export default function InventoryPage() {
   const [activeFilter, setActiveFilter] = useState<'all' | 'stock' | 'equipment_all' | 'Baik' | 'Rusak' | 'Hilang' | 'Maintenance' | 'Tidak Digunakan'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isBulkUpdateDialogOpen, setIsBulkUpdateDialogOpen] = useState(false);
+  const [bulkUpdateItems, setBulkUpdateItems] = useState<Array<{id: number, current_stock: string, name: string, unit: string}>>([]);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [priceInputMode, setPriceInputMode] = useState<'total' | 'unit'>('total');
@@ -284,6 +286,36 @@ export default function InventoryPage() {
     }
   };
 
+  const openBulkUpdate = () => {
+    const stockItems = items.filter(i => i.type === 'stock').map(i => ({
+      id: i.id,
+      name: i.name,
+      unit: i.unit || '-',
+      current_stock: i.current_stock?.toString() || '0'
+    }));
+    setBulkUpdateItems(stockItems);
+    setIsBulkUpdateDialogOpen(true);
+  };
+
+  const handleBulkUpdateSubmit = async () => {
+    try {
+      const payload = {
+        items: bulkUpdateItems.map(item => ({
+          id: item.id,
+          current_stock: parseFloat(item.current_stock) || 0
+        }))
+      };
+      
+      await api.post('/inventory/bulk-update', payload);
+      toast.success('Stok harian berhasil diperbarui');
+      setIsBulkUpdateDialogOpen(false);
+      fetchItems();
+    } catch (error: any) {
+      console.error('Failed to bulk update:', error);
+      toast.error(error.response?.data?.message || 'Gagal memperbarui stok harian');
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -420,21 +452,79 @@ export default function InventoryPage() {
             )}
 
             {hasPermission('manage_inventory') && (
-              <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button
-                    className="btn-primary"
-                    onClick={() => {
-                      resetForm();
-                      if (isAdmin() && selectedStoreId && selectedStoreId !== 'all') {
-                        setFormData(prev => ({ ...prev, store_id: selectedStoreId }));
-                      }
-                    }}
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Tambah Item
-                  </Button>
-                </DialogTrigger>
+              <>
+                <Dialog open={isBulkUpdateDialogOpen} onOpenChange={setIsBulkUpdateDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="border-primary text-primary hover:bg-primary/10"
+                      onClick={openBulkUpdate}
+                    >
+                      <Edit2 className="w-4 h-4 mr-2" />
+                      Auto Isi Harian
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                      <DialogTitle className="font-display">
+                        Auto Isi Stok Harian
+                      </DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-y-auto mt-4 pr-2">
+                      <div className="space-y-4">
+                        {bulkUpdateItems.map((item, index) => (
+                          <div key={item.id} className="flex items-center justify-between gap-4 p-3 bg-secondary/30 rounded-lg">
+                            <div className="flex-1">
+                              <Label className="text-sm font-medium">{item.name}</Label>
+                            </div>
+                            <div className="flex items-center gap-2 w-[200px]">
+                              <Input
+                                type="number"
+                                className="input-coffee flex-1"
+                                value={item.current_stock}
+                                onChange={(e) => {
+                                  const newItems = [...bulkUpdateItems];
+                                  newItems[index].current_stock = e.target.value;
+                                  setBulkUpdateItems(newItems);
+                                }}
+                                min="0"
+                                step="0.01"
+                              />
+                              <span className="text-sm text-muted-foreground w-12">{item.unit}</span>
+                            </div>
+                          </div>
+                        ))}
+                        {bulkUpdateItems.length === 0 && (
+                          <p className="text-center text-muted-foreground py-8">Tidak ada bahan baku yang ditemukan.</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-3 pt-4 border-t mt-4">
+                      <Button variant="outline" className="flex-1" onClick={() => setIsBulkUpdateDialogOpen(false)}>
+                        Batal
+                      </Button>
+                      <button className="btn-primary flex-1" onClick={handleBulkUpdateSubmit}>
+                        Simpan Semua
+                      </button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="btn-primary"
+                      onClick={() => {
+                        resetForm();
+                        if (isAdmin() && selectedStoreId && selectedStoreId !== 'all') {
+                          setFormData(prev => ({ ...prev, store_id: selectedStoreId }));
+                        }
+                      }}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Tambah Item
+                    </Button>
+                  </DialogTrigger>
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader>
                     <DialogTitle className="font-display">
@@ -670,6 +760,7 @@ export default function InventoryPage() {
                   </div>
                 </DialogContent>
               </Dialog>
+              </>
             )}
           </div>
         </div>

@@ -141,6 +141,41 @@ class InventoryController extends Controller
     }
 
     /**
+     * Bulk update inventory items
+     */
+    public function bulkUpdate(Request $request)
+    {
+        // Check if user has permission
+        if (!$request->user()->hasPermission('manage_inventory')) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'items' => 'required|array',
+            'items.*.id' => 'required|exists:inventory_items,id',
+            'items.*.current_stock' => 'required|numeric|min:0',
+        ]);
+
+        $updatedItems = [];
+        foreach ($validated['items'] as $itemData) {
+            $item = InventoryItem::find($itemData['id']);
+            if ($item && $item->type === 'stock') {
+                $item->current_stock = $itemData['current_stock'];
+                
+                // Recalculate price_per_unit if needed
+                if ($item->total_price > 0 && $item->current_stock > 0) {
+                    $item->price_per_unit = $item->total_price / $item->current_stock;
+                }
+                
+                $item->save();
+                $updatedItems[] = $item;
+            }
+        }
+
+        return response()->json(['message' => 'Bulk update successful', 'data' => $updatedItems]);
+    }
+
+    /**
      * Remove the specified inventory item
      */
     public function destroy(Request $request, InventoryItem $inventoryItem)

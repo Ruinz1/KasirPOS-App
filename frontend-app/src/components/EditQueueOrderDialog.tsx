@@ -86,12 +86,14 @@ export function EditQueueOrderDialog({
     const [loading, setLoading] = useState(false);
     const [menuLoading, setMenuLoading] = useState(false);
     const [editingNoteIdx, setEditingNoteIdx] = useState<number | null>(null);
+    const [customerName, setCustomerName] = useState('');
 
     // Load menu items and order items when dialog opens
     useEffect(() => {
         if (open && order) {
             fetchMenuItems();
             initializeEditItems();
+            setCustomerName(order.customer_name || '');
         }
     }, [open, order]);
 
@@ -335,7 +337,7 @@ export function EditQueueOrderDialog({
                     };
                 }),
                 order_type: order.order_type || 'dine_in',
-                customer_name: order.customer_name,
+                customer_name: customerName,
             };
 
             await api.put(`/orders/${order.id}/items`, payload);
@@ -389,9 +391,17 @@ export function EditQueueOrderDialog({
                             {order.order_type === 'takeaway' ? 'Dibungkus' : 'Makan Sini'}
                         </Badge>
                     </DialogTitle>
-                    <p className="text-xs text-muted-foreground">
-                        {order.customer_name || 'Pelanggan'} · Kasir: {order.user?.name}
-                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                        <Input 
+                            value={customerName}
+                            onChange={(e) => setCustomerName(e.target.value)}
+                            placeholder="Nama Pelanggan"
+                            className="h-7 text-xs w-48"
+                        />
+                        <span className="text-xs text-muted-foreground">
+                            · Kasir: {order.user?.name}
+                        </span>
+                    </div>
                 </DialogHeader>
 
                 <div className="flex-1 overflow-y-auto space-y-3 py-3 pr-1">

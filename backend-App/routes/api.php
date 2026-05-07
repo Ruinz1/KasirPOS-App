@@ -33,6 +33,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/inventory/{inventoryItem}', [InventoryController::class, 'show']);
     Route::get('/inventory/calculate/total-value', [InventoryController::class, 'calculateTotalValue']);
     Route::post('/inventory', [InventoryController::class, 'store']);
+    Route::post('/inventory/bulk-update', [InventoryController::class, 'bulkUpdate']);
     Route::put('/inventory/{inventoryItem}', [InventoryController::class, 'update']);
     Route::delete('/inventory/{inventoryItem}', [InventoryController::class, 'destroy']);
 
