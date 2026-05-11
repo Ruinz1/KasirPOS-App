@@ -2895,3 +2895,4 @@ export default function ReportsPage() {
     </MainLayout >
   );
 }
+

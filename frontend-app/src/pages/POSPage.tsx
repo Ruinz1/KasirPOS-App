@@ -2755,3 +2755,4 @@ export default function POSPage() {
     </MainLayout >
   );
 }
+

@@ -24,7 +24,9 @@ import {
   ChevronRight,
   ShoppingBag,
   CalendarClock,
-  Table
+  Table,
+  ChefHat,
+  GlassWater
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -35,6 +37,8 @@ const allMenuItems = [
   { icon: ShoppingCart, label: 'Kasir', path: '/pos', permission: 'manage_orders' },
   { icon: Table, label: 'Meja', path: '/tables', permission: 'manage_orders' },
   { icon: ClipboardList, label: 'Antrian', path: '/queue', permission: 'manage_orders' },
+  { icon: ChefHat, label: 'Antrian Makanan', path: '/queue/food', permission: 'manage_orders' },
+  { icon: GlassWater, label: 'Antrian Minuman', path: '/queue/drink', permission: 'manage_orders' },
   { icon: History, label: 'Riwayat Pesanan', path: '/order-history', permission: 'manage_orders' },
   { icon: Package, label: 'Inventori', path: '/inventory', permission: 'view_inventory' },
   { icon: ShoppingBag, label: 'Belanja Harian', path: '/daily-shopping', permission: 'view_inventory' },
@@ -182,7 +186,9 @@ export function Sidebar() {
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto scrollbar-hide">
         {menuItems.map((item) => {
           const Icon = item.icon;
-          const isActive = location.pathname === item.path;
+          const isActive = item.path === '/queue'
+            ? location.pathname === '/queue'
+            : location.pathname === item.path || location.pathname.startsWith(item.path + '/');
 
           const LinkContent = (
             <Link
@@ -241,3 +247,4 @@ export function Sidebar() {
     </div>
   );
 }
+

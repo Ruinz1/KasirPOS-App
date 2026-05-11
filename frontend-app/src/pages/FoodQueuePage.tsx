@@ -1,0 +1,461 @@
+import { useState, useEffect, useRef } from "react";
+import api from "@/lib/api";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import {
+    ClipboardList, CheckCircle2, Clock, Package, Undo2,
+    Utensils, Pencil, RefreshCw, ChefHat
+} from "lucide-react";
+import { MainLayout } from "@/components/layout/MainLayout";
+import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
+
+interface OrderItem {
+    id: number;
+    menu_item_id: number;
+    quantity: number;
+    price: number;
+    note: string | null;
+    is_takeaway?: boolean;
+    is_addon?: boolean;
+    menu_item: {
+        id: number;
+        name: string;
+        price: number;
+        category?: string;
+    } | null;
+    created_at?: string;
+}
+
+interface QueueOrder {
+    id: number;
+    customer_name: string;
+    daily_number: number;
+    total: number;
+    queue_status: "pending" | "in_progress" | "completed";
+    drink_queue_status: "pending" | "completed";
+    notes: string | null;
+    created_at: string;
+    order_type?: "dine_in" | "takeaway";
+    items: OrderItem[];
+    user: { id: number; name: string };
+    queue_completed_at: string | null;
+    payment_status: "pending" | "paid";
+    payment_method?: string;
+    paid_amount?: number;
+    second_paid_amount?: number;
+    change_amount?: number;
+    table?: { id: number; table_number: string; capacity: number } | null;
+}
+
+const DRINK_CATEGORIES = ["minuman", "drink", "beverage", "drinks"];
+
+const isFoodItem = (item: OrderItem) => {
+    const cat = (item.menu_item?.category || "").toLowerCase();
+    return !DRINK_CATEGORIES.includes(cat);
+};
+
+const isDrinkItem = (item: OrderItem) => {
+    const cat = (item.menu_item?.category || "").toLowerCase();
+    return DRINK_CATEGORIES.includes(cat);
+};
+
+const getDisplayItems = (order: QueueOrder) => {
+    const isReactivated = !!(order.queue_completed_at && order.queue_status !== "completed");
+    return isReactivated
+        ? order.items.filter(i => {
+            if (!i.is_addon) return false;
+            const cat = (i.menu_item?.category || "").toLowerCase();
+            return ["makanan", "minuman"].includes(cat);
+        })
+        : [...order.items].sort((a, b) => a.id - b.id);
+};
+
+const shouldHideOrder = (order: QueueOrder): boolean => {
+    const displayItems = getDisplayItems(order);
+    const foodItems = displayItems.filter(isFoodItem);
+    const drinkItems = displayItems.filter(isDrinkItem);
+    const hasFoodSection = foodItems.length > 0;
+    const hasDrinkSection = drinkItems.length > 0;
+    const foodCompleted = order.queue_status === "completed";
+    const drinkCompleted = order.drink_queue_status === "completed";
+    if (hasFoodSection && hasDrinkSection) return foodCompleted && drinkCompleted;
+    if (hasFoodSection) return foodCompleted;
+    if (hasDrinkSection) return drinkCompleted;
+    return foodCompleted;
+};
+
+const FoodQueuePage = () => {
+    const [orders, setOrders] = useState<QueueOrder[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [pendingCount, setPendingCount] = useState(0);
+    const [completedToday, setCompletedToday] = useState(0);
+    const [editingNotes, setEditingNotes] = useState<number | null>(null);
+    const [notesValue, setNotesValue] = useState("");
+    const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
+    const [showEditDialog, setShowEditDialog] = useState(false);
+    const { toast } = useToast();
+    const prevOrdersRef = useRef<QueueOrder[]>([]);
+
+    const playNotificationSound = () => {
+        try {
+            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+            if (!AudioContext) return;
+            const ctx = new AudioContext();
+            const osc1 = ctx.createOscillator(); const g1 = ctx.createGain();
+            osc1.connect(g1); g1.connect(ctx.destination);
+            osc1.type = "sine"; osc1.frequency.setValueAtTime(900, ctx.currentTime);
+            g1.gain.setValueAtTime(0.3, ctx.currentTime);
+            g1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+            osc1.start(ctx.currentTime); osc1.stop(ctx.currentTime + 0.6);
+            const osc2 = ctx.createOscillator(); const g2 = ctx.createGain();
+            osc2.connect(g2); g2.connect(ctx.destination);
+            osc2.type = "sine"; osc2.frequency.setValueAtTime(700, ctx.currentTime + 0.5);
+            g2.gain.setValueAtTime(0.3, ctx.currentTime + 0.5);
+            g2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5);
+            osc2.start(ctx.currentTime + 0.5); osc2.stop(ctx.currentTime + 1.5);
+        } catch (e) { console.error("Audio error", e); }
+    };
+
+    const speakNewOrder = () => {
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+            const utt = new SpeechSynthesisUtterance("Pesanan Baru");
+            utt.lang = "id-ID"; utt.rate = 1.0; utt.pitch = 1.1;
+            const voices = window.speechSynthesis.getVoices();
+            const v = voices.find(v => v.lang.includes("id"));
+            if (v) utt.voice = v;
+            window.speechSynthesis.speak(utt);
+        }
+    };
+
+    const speakFoodCompleted = (customerName: string, isTakeaway: boolean) => {
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+            const action = isTakeaway ? "Dibungkus" : "Makan Sini";
+            const utt = new SpeechSynthesisUtterance(`Pesanan atas nama ${customerName}, ${action}`);
+            utt.lang = "id-ID"; utt.rate = 0.9; utt.pitch = 1;
+            const voices = window.speechSynthesis.getVoices();
+            const v = voices.find(v => v.lang.includes("id"));
+            if (v) utt.voice = v;
+            window.speechSynthesis.speak(utt);
+        }
+    };
+
+    const fetchQueue = async () => {
+        try {
+            const res = await api.get("/queue");
+            const data: QueueOrder[] = res.data;
+            const isChanged = JSON.stringify(data) !== JSON.stringify(prevOrdersRef.current);
+            if (isChanged) {
+                const prevIds = new Set(prevOrdersRef.current.map(o => o.id));
+                const newOrders = data.filter(o => !prevIds.has(o.id));
+                const isFirst = prevOrdersRef.current.length === 0 && data.length > 0;
+                if (newOrders.length > 0 || isFirst) {
+                    const hasActive = isFirst
+                        ? data.some(o => o.queue_status !== "completed")
+                        : newOrders.some(o => o.queue_status !== "completed");
+                    if (hasActive) {
+                        playNotificationSound();
+                        if (newOrders.length > 0 && !isFirst) {
+                            toast({ title: "🔔 Pesanan Masuk!", description: "Ada pesanan baru.", className: "bg-green-600 text-white border-none shadow-lg" });
+                            setTimeout(() => speakNewOrder(), 800);
+                        }
+                    }
+                }
+                // Filter: hanya tampilkan order yang punya food items & belum selesai makanannya
+                const foodOrders = data.filter(o => {
+                    if (shouldHideOrder(o)) return false;
+                    const items = getDisplayItems(o);
+                    return items.filter(isFoodItem).length > 0;
+                }).sort((a, b) => {
+                    const p = { in_progress: 0, pending: 1, completed: 2 };
+                    return p[a.queue_status] - p[b.queue_status] || a.id - b.id;
+                });
+                setOrders(foodOrders);
+                // Menunggu = food masih pending (belum dicentang selesai)
+                setPendingCount(foodOrders.filter(o => o.queue_status !== "completed").length);
+                prevOrdersRef.current = data;
+            }
+        } catch (e) {
+            console.error("Error fetching queue:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchStatistics = async () => {
+        try {
+            const res = await api.get("/queue/statistics");
+            setCompletedToday(res.data.completed_today ?? 0);
+        } catch (e) {
+            console.error("Error fetching statistics:", e);
+        }
+    };
+
+    useEffect(() => {
+        fetchQueue();
+        fetchStatistics();
+        const interval = setInterval(() => { fetchQueue(); fetchStatistics(); }, 5000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const handleFoodStatusChange = async (orderId: number, completed: boolean) => {
+        try {
+            if (completed) {
+                const order = orders.find(o => o.id === orderId);
+                if (order?.customer_name) speakFoodCompleted(order.customer_name, order.order_type === "takeaway");
+            }
+            const res = await api.put(`/queue/${orderId}/status`, { queue_status: completed ? "completed" : "pending" });
+            if (completed) {
+                const updated = res.data?.order as QueueOrder | undefined;
+                if (updated && shouldHideOrder(updated)) {
+                    setOrders(prev => prev.filter(o => o.id !== orderId));
+                    prevOrdersRef.current = prevOrdersRef.current.filter(o => o.id !== orderId);
+                    toast({ title: "✅ Makanan Selesai!", description: "Dikeluarkan dari antrian.", className: "bg-green-600 text-white border-none" });
+                    fetchStatistics();
+                    return;
+                }
+            }
+            toast({ title: completed ? "✅ Makanan Selesai" : "↩ Dibatalkan", description: completed ? "Makanan telah selesai!" : "Dikembalikan ke antrian" });
+            fetchQueue();
+            fetchStatistics();
+        } catch (e) {
+            toast({ title: "Error", description: "Gagal memperbarui status", variant: "destructive" });
+        }
+    };
+
+    const handleNotesUpdate = async (orderId: number) => {
+        try {
+            await api.put(`/queue/${orderId}/notes`, { notes: notesValue });
+            toast({ title: "Berhasil", description: "Catatan diperbarui" });
+            setEditingNotes(null);
+            fetchQueue();
+        } catch (e) {
+            toast({ title: "Error", description: "Gagal memperbarui catatan", variant: "destructive" });
+        }
+    };
+
+    const formatTime = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+
+    if (loading) {
+        return (
+            <MainLayout>
+                <div className="flex items-center justify-center h-screen">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto" />
+                        <p className="mt-4 text-muted-foreground">Memuat antrian makanan...</p>
+                    </div>
+                </div>
+            </MainLayout>
+        );
+    }
+
+    return (
+        <MainLayout>
+            <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 dark:from-orange-950/20 dark:via-amber-950/10 dark:to-background">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-orange-500 to-amber-500 text-white px-6 py-5 shadow-lg">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-white/20 p-3 rounded-2xl">
+                                <ChefHat className="h-8 w-8" />
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-bold tracking-wide">Antrian Makanan</h1>
+                                <p className="text-orange-100 text-sm mt-0.5">
+                                    {new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" })}
+                                </p>
+                            </div>
+                            <Badge className="bg-white/25 text-white border-white/30 animate-pulse ml-2">
+                                ● LIVE
+                            </Badge>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            {/* Stats */}
+                            <div className="hidden sm:flex items-center gap-4 bg-white/15 rounded-2xl px-5 py-3">
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold">{completedToday}</div>
+                                    <div className="text-[11px] text-orange-100">Selesai Hari Ini</div>
+                                </div>
+                                <div className="w-px h-10 bg-white/30" />
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold">{pendingCount}</div>
+                                    <div className="text-[11px] text-orange-100">Menunggu</div>
+                                </div>
+                                <div className="w-px h-10 bg-white/30" />
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold">{orders.length}</div>
+                                    <div className="text-[11px] text-orange-100">Dalam Antrian</div>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => { playNotificationSound(); setTimeout(() => speakNewOrder(), 800); }}
+                                className="text-xs text-white/70 underline hover:text-white"
+                            >Tes Suara</button>
+                            <Button onClick={() => { fetchQueue(); fetchStatistics(); }} variant="outline" size="sm" className="bg-white/20 border-white/30 text-white hover:bg-white/30">
+                                <RefreshCw className="h-4 w-4 mr-1" /> Refresh
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Content */}
+                <div className="p-6">
+                    {orders.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-24 text-center">
+                            <div className="bg-orange-100 dark:bg-orange-950/30 rounded-full p-6 mb-4">
+                                <ChefHat className="h-14 w-14 text-orange-400" />
+                            </div>
+                            <h2 className="text-xl font-semibold text-muted-foreground mb-1">Tidak ada antrian makanan</h2>
+                            <p className="text-sm text-muted-foreground">Pesanan makanan akan muncul di sini secara otomatis</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                            {orders.map(order => {
+                                const displayItems = getDisplayItems(order);
+                                const foodItems = displayItems.filter(isFoodItem);
+                                if (foodItems.length === 0) return null;
+                                const hasAddons = foodItems.some(i => i.is_addon);
+                                const foodCompleted = order.queue_status === "completed";
+                                const isInProgress = order.queue_status === "in_progress";
+
+                                return (
+                                    <Card
+                                        key={order.id}
+                                        className={`border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ${
+                                            foodCompleted
+                                                ? "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80"
+                                                : hasAddons
+                                                    ? "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-purple-100 shadow-md"
+                                                    : isInProgress
+                                                        ? "border-blue-400 bg-blue-50 dark:bg-blue-950/20 shadow-lg shadow-blue-100 scale-[1.01]"
+                                                        : "border-orange-300 bg-white dark:bg-orange-950/10 shadow-sm"
+                                        }`}
+                                    >
+                                        {/* Top color bar */}
+                                        <div className={`h-1.5 w-full ${foodCompleted ? "bg-green-500" : hasAddons ? "bg-purple-500" : isInProgress ? "bg-blue-500" : "bg-orange-400"}`} />
+
+                                        <CardContent className="p-4">
+                                            {/* Addon Banner */}
+                                            {hasAddons && !foodCompleted && (
+                                                <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded-lg mb-3 font-bold border border-purple-200 dark:border-purple-800 flex items-center gap-2 animate-pulse">
+                                                    <span className="text-base">🔔</span>
+                                                    <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru</div></div>
+                                                </div>
+                                            )}
+
+                                            {/* Header */}
+                                            <div className="flex items-start justify-between mb-3">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className={`text-5xl font-black leading-none ${foodCompleted ? "text-green-500" : "text-orange-500"}`}>
+                                                            #{order.daily_number}
+                                                        </span>
+                                                        <div className="flex flex-col gap-1">
+                                                            <Badge
+                                                                variant={order.order_type === "takeaway" ? "destructive" : "secondary"}
+                                                                className="text-[10px] px-1.5 py-0.5 h-fit"
+                                                            >
+                                                                {order.order_type === "takeaway" ? "🥡 Bungkus" : "🍽️ Makan Sini"}
+                                                            </Badge>
+                                                            {hasAddons && (
+                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50 animate-pulse">
+                                                                    + TAMBAHAN
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <p className="font-bold text-sm truncate" title={order.customer_name || "Pelanggan"}>
+                                                        {order.customer_name || "Pelanggan"}
+                                                    </p>
+                                                    {order.table && (
+                                                        <Badge variant="outline" className="text-[10px] mt-1 border-primary text-primary bg-primary/10">
+                                                            🪑 Meja {order.table.table_number}
+                                                        </Badge>
+                                                    )}
+                                                    <p className="text-[11px] text-muted-foreground mt-0.5">{formatTime(order.created_at)}</p>
+                                                </div>
+                                            </div>
+
+                                            {/* Food Items Box */}
+                                            <div className={`rounded-xl border-2 overflow-hidden mb-3 ${foodCompleted ? "border-green-400" : "border-orange-300"}`}>
+                                                <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${foodCompleted ? "bg-green-500" : "bg-orange-500"}`}>
+                                                    <Utensils className="h-3.5 w-3.5" />
+                                                    <span>DAFTAR MAKANAN</span>
+                                                    {foodCompleted && <span className="ml-auto bg-white/25 px-1.5 py-0.5 rounded text-[10px]">✓ Selesai</span>}
+                                                </div>
+                                                <div className="px-3 py-2 space-y-1.5 max-h-40 overflow-y-auto bg-white/60 dark:bg-transparent">
+                                                    {foodItems.map(item => (
+                                                        <div key={item.id} className={`text-xs leading-relaxed ${item.is_addon ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-lg px-2 py-1" : ""}`}>
+                                                            <div className="flex items-baseline gap-1">
+                                                                <span className="font-black text-orange-600 text-sm">{item.quantity}×</span>
+                                                                <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
+                                                                {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
+                                                                {item.is_addon && <span className="text-purple-600 text-[10px] font-bold animate-pulse ml-1">● BARU</span>}
+                                                            </div>
+                                                            {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {item.note}</p>}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                {/* Action Button */}
+                                                <div className="p-2 bg-white/40 dark:bg-transparent border-t border-orange-100 dark:border-orange-900/30">
+                                                    {foodCompleted ? (
+                                                        <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-orange-700 hover:bg-orange-100" onClick={() => handleFoodStatusChange(order.id, false)}>
+                                                            <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
+                                                        </Button>
+                                                    ) : (
+                                                        <Button size="sm" className="w-full h-8 text-xs bg-orange-500 hover:bg-orange-600 text-white shadow-sm" onClick={() => handleFoodStatusChange(order.id, true)}>
+                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Makanan Selesai
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Notes */}
+                                            <div className="border-t pt-2">
+                                                <p className="text-[11px] font-semibold text-muted-foreground mb-1">📝 Catatan</p>
+                                                {editingNotes === order.id ? (
+                                                    <div className="space-y-1.5">
+                                                        <Textarea value={notesValue} onChange={e => setNotesValue(e.target.value)} placeholder="Catatan..." rows={2} className="text-xs" />
+                                                        <div className="flex gap-1">
+                                                            <Button size="sm" onClick={() => handleNotesUpdate(order.id)} className="text-xs h-7 flex-1">Simpan</Button>
+                                                            <Button size="sm" variant="outline" onClick={() => { setEditingNotes(null); setNotesValue(""); }} className="text-xs h-7 flex-1">Batal</Button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="p-2 bg-muted/40 rounded-lg cursor-pointer hover:bg-muted text-xs min-h-[2.5rem] max-h-16 overflow-y-auto" onClick={() => { setEditingNotes(order.id); setNotesValue(order.notes || ""); }}>
+                                                        {order.notes ? <span>{order.notes}</span> : <span className="text-muted-foreground italic">Klik untuk tambah catatan...</span>}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Footer */}
+                                            <div className="mt-2 pt-2 border-t flex items-center justify-between">
+                                                <p className="text-[11px] text-muted-foreground truncate">Kasir: {order.user.name}</p>
+                                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-primary" onClick={e => { e.stopPropagation(); setEditingOrder(order); setShowEditDialog(true); }}>
+                                                    <Pencil className="h-3 w-3" /> Edit
+                                                </Button>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <EditQueueOrderDialog
+                open={showEditDialog}
+                onOpenChange={open => { setShowEditDialog(open); if (!open) setEditingOrder(null); }}
+                order={editingOrder}
+                onSuccess={() => { prevOrdersRef.current = []; fetchQueue(); }}
+            />
+        </MainLayout>
+    );
+};
+
+export default FoodQueuePage;

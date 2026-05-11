@@ -15,6 +15,8 @@ import StorePage from "./pages/StorePage";
 import UsersPage from "./pages/UsersPage";
 import StoresManagementPage from "./pages/StoresManagementPage";
 import QueuePage from "./pages/QueuePage";
+import FoodQueuePage from "./pages/FoodQueuePage";
+import DrinkQueuePage from "./pages/DrinkQueuePage";
 import OrderHistoryPage from "./pages/OrderHistoryPage";
 import DailyShoppingPage from "./pages/DailyShoppingPage";
 import LeavePage from "./pages/LeavePage";
@@ -82,6 +84,8 @@ const App = () => (
             <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
             <Route path="/tables" element={<ProtectedRoute><TablesPage /></ProtectedRoute>} />
             <Route path="/queue" element={<ProtectedRoute><QueuePage /></ProtectedRoute>} />
+            <Route path="/queue/food" element={<ProtectedRoute><FoodQueuePage /></ProtectedRoute>} />
+            <Route path="/queue/drink" element={<ProtectedRoute><DrinkQueuePage /></ProtectedRoute>} />
             <Route path="/order-history" element={<ProtectedRoute><OrderHistoryPage /></ProtectedRoute>} />
             <Route path="/daily-shopping" element={<ProtectedRoute><DailyShoppingPage /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
