@@ -63,7 +63,7 @@ class DailyShoppingController extends Controller
 
             $createdItems = [];
             
-            DB::transaction(function () use ($validated, $buyerId, $storeId, &$createdItems) {
+            DB::transaction(function () use ($validated, $buyerId, $storeId, &$createdItems, $imagePath) {
                 foreach ($validated['items'] as $itemData) {
                     $totalPrice = $itemData['quantity'] * $itemData['price_per_unit'];
                     

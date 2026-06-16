@@ -23,6 +23,7 @@ class DailyShopping extends Model
         'status',
         'notes',
         'shopping_date',
+        'image_path',
     ];
 
     protected $casts = [
