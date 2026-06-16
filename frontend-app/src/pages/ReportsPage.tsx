@@ -76,6 +76,14 @@ export default function ReportsPage() {
   const [showGajiCol, setShowGajiCol] = useState(true); // toggle kolom Operasional
   const [showGajiSummary, setShowGajiSummary] = useState(true); // toggle estimasi gaji di card ringkasan
 
+  // Filter untuk tabel Ringkasan Penjualan Menu
+  const [menuFilter, setMenuFilter] = useState({
+    category: 'all',      // Semua / makanan / minuman / snack
+    packagingType: 'all', // Semua / Makan Disini / Dibungkus
+    paymentMethod: 'all', // Semua / cash / qris / card
+    kuahVariant: 'all',   // Semua / Bening / Coto / Mercon / dll
+  });
+
 
   // Helper for timezone correct date string YYYY-MM-DD
   const getLocalDateString = () => {
@@ -271,14 +279,16 @@ export default function ReportsPage() {
       setOrders(sortedOrders);
       processChartData(sortedOrders, shoppingRes.data?.per_day || [], fetchedEmployees);
 
-      // Calculate Menu Sales Stats (grouped by menu + kuah variant + packaging type)
+      // Calculate Menu Sales Stats (grouped by menu + kuah variant + packaging type + payment method)
       const items: any = {};
       (ordersRes.data || []).forEach((order: any) => {
         if (order.status === 'cancelled') return; // Skip cancelled orders
 
+        // Determine category from menu items for filter
         order.items.forEach((item: any) => {
           const id = item.menu_item_id || item.menu_item?.id;
           const name = item.menu_item?.name || 'Unknown Item';
+          const category = item.menu_item?.category?.toLowerCase() || '';
 
           // Extract kuah variant from note
           const noteText = item.note || '';
@@ -292,14 +302,19 @@ export default function ReportsPage() {
           const isDibungkus = order.order_type === 'takeaway' || !!item.is_takeaway;
           const packagingType = isDibungkus ? 'Dibungkus' : 'Makan Disini';
 
-          // Unique key: menu_id + kuah variant + packaging type
-          const key = `${id}_${kuahVariant}_${packagingType}`;
+          // Payment method for this order
+          const paymentMethod = order.payment_method || 'unknown';
+
+          // Unique key: menu_id + kuah variant + packaging type + payment method
+          const key = `${id}_${kuahVariant}_${packagingType}_${paymentMethod}`;
 
           if (!items[key]) {
             items[key] = {
               name: name,
+              category: category,
               kuahVariant: kuahVariant,
               packagingType: packagingType,
+              paymentMethod: paymentMethod,
               quantity: 0,
               total: 0
             };
@@ -309,14 +324,15 @@ export default function ReportsPage() {
         });
       });
 
-      // Sort: by menu name → kuah variant → packaging type
+      // Sort: by menu name → kuah variant → packaging type → payment method
       const sortedMenuStats = Object.values(items).sort((a: any, b: any) => {
         const nameCompare = a.name.localeCompare(b.name);
         if (nameCompare !== 0) return nameCompare;
         const kuahCompare = (a.kuahVariant || '').localeCompare(b.kuahVariant || '');
         if (kuahCompare !== 0) return kuahCompare;
-        // Makan Disini before Dibungkus
-        return (a.packagingType || '').localeCompare(b.packagingType || '');
+        const packCompare = (a.packagingType || '').localeCompare(b.packagingType || '');
+        if (packCompare !== 0) return packCompare;
+        return (a.paymentMethod || '').localeCompare(b.paymentMethod || '');
       });
       setMenuStats(sortedMenuStats);
 
@@ -1867,9 +1883,28 @@ export default function ReportsPage() {
 
         {/* Menu Stats Table */}
         {menuStats.length > 0 && (() => {
-          // Group menuStats by name for visual grouping
+          // Collect unique values for filter dropdowns
+          const allKuahVariants = [...new Set((menuStats as any[]).map(i => i.kuahVariant).filter(Boolean))].sort();
+          const allPaymentMethods = [...new Set((menuStats as any[]).map(i => i.paymentMethod).filter(Boolean))].sort();
+
+          // Apply filters
+          const filteredStats = (menuStats as any[]).filter(item => {
+            if (menuFilter.packagingType !== 'all' && item.packagingType !== menuFilter.packagingType) return false;
+            if (menuFilter.paymentMethod !== 'all' && item.paymentMethod !== menuFilter.paymentMethod) return false;
+            if (menuFilter.kuahVariant !== 'all' && item.kuahVariant !== menuFilter.kuahVariant) return false;
+            if (menuFilter.category !== 'all') {
+              const cat = (item.category || '').toLowerCase();
+              const name = (item.name || '').toLowerCase();
+              if (menuFilter.category === 'makanan' && !(cat === 'makanan' || name.includes('bakso') || name.includes('mie') || name.includes('nasi'))) return false;
+              if (menuFilter.category === 'minuman' && !(cat === 'minuman' || name.includes('jeruk') || name.includes('teh') || name.includes('mineral') || name.includes('aquviva'))) return false;
+              if (menuFilter.category === 'snack' && !(cat === 'snack' || name.includes('kerupuk') || name.includes('krupuk') || name.includes('kacang'))) return false;
+            }
+            return true;
+          });
+
+          // Group filtered stats by name for visual grouping
           const grouped: { name: string; items: any[] }[] = [];
-          (menuStats as any[]).forEach((item) => {
+          filteredStats.forEach((item) => {
             const existing = grouped.find(g => g.name === item.name);
             if (existing) {
               existing.items.push(item);
@@ -1878,16 +1913,151 @@ export default function ReportsPage() {
             }
           });
 
+          // Payment method recap from filtered data
+          const paymentRecap: Record<string, { qty: number; total: number }> = {};
+          filteredStats.forEach(item => {
+            const pm = item.paymentMethod || 'unknown';
+            if (!paymentRecap[pm]) paymentRecap[pm] = { qty: 0, total: 0 };
+            paymentRecap[pm].qty += item.quantity;
+            paymentRecap[pm].total += item.total;
+          });
+
+          const hasActiveFilter = menuFilter.category !== 'all' || menuFilter.packagingType !== 'all' ||
+            menuFilter.paymentMethod !== 'all' || menuFilter.kuahVariant !== 'all';
+
+          const pmLabels: Record<string, string> = { cash: '💵 Cash', qris: '📱 QRIS', card: '💳 Card' };
+          const pmColors: Record<string, string> = {
+            cash: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-700',
+            qris: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-700',
+            card: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-purple-200 dark:border-purple-700',
+          };
+
           return (
             <div className="card-elevated p-6 mb-8">
-              <h3 className="font-display font-semibold text-lg mb-4">Ringkasan Penjualan Menu</h3>
+              {/* Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
+                <h3 className="font-display font-semibold text-lg">Ringkasan Penjualan Menu</h3>
+                <span className="text-xs text-muted-foreground bg-secondary px-2.5 py-1 rounded-full">
+                  {filteredStats.reduce((a, i) => a + i.quantity, 0)} porsi · {formatCurrency(filteredStats.reduce((a, i) => a + i.total, 0))}
+                </span>
+              </div>
+
+              {/* Filter Controls */}
+              <div className="bg-secondary/30 rounded-xl p-4 mb-5 border border-border">
+                <div className="flex items-center gap-2 mb-3">
+                  <Filter className="w-4 h-4 text-muted-foreground" />
+                  <p className="text-sm font-semibold">Filter Rekap Menu</p>
+                  {hasActiveFilter && (
+                    <button
+                      onClick={() => setMenuFilter({ category: 'all', packagingType: 'all', paymentMethod: 'all', kuahVariant: 'all' })}
+                      className="ml-auto text-xs text-destructive hover:underline flex items-center gap-1"
+                    >
+                      ✕ Reset Filter
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {/* Category filter */}
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Jenis Menu</label>
+                    <Select value={menuFilter.category} onValueChange={val => setMenuFilter(f => ({ ...f, category: val }))}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Semua" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Semua Jenis</SelectItem>
+                        <SelectItem value="makanan">🍜 Makanan</SelectItem>
+                        <SelectItem value="minuman">🥤 Minuman</SelectItem>
+                        <SelectItem value="snack">🍪 Snack</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Packaging Type filter */}
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Tipe</label>
+                    <Select value={menuFilter.packagingType} onValueChange={val => setMenuFilter(f => ({ ...f, packagingType: val }))}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Semua" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Semua Tipe</SelectItem>
+                        <SelectItem value="Makan Disini">🍽️ Makan Disini</SelectItem>
+                        <SelectItem value="Dibungkus">📦 Dibungkus</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Payment Method filter */}
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Pembayaran</label>
+                    <Select value={menuFilter.paymentMethod} onValueChange={val => setMenuFilter(f => ({ ...f, paymentMethod: val }))}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Semua" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Semua Pembayaran</SelectItem>
+                        {allPaymentMethods.map(pm => (
+                          <SelectItem key={pm} value={pm}>
+                            {pmLabels[pm] || pm}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Kuah Variant filter */}
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Variasi Kuah</label>
+                    <Select value={menuFilter.kuahVariant} onValueChange={val => setMenuFilter(f => ({ ...f, kuahVariant: val }))}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Semua" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Semua Variasi</SelectItem>
+                        <SelectItem value="">Tanpa Variasi</SelectItem>
+                        {allKuahVariants.map(v => (
+                          <SelectItem key={v} value={v}>🍜 {v}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment Method Recap Cards */}
+              {Object.keys(paymentRecap).length > 1 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                  {Object.entries(paymentRecap).sort(([a], [b]) => a.localeCompare(b)).map(([pm, data]) => (
+                    <div key={pm} className={`rounded-xl p-3 border ${pmColors[pm] || 'bg-secondary/30 border-border text-foreground'}`}>
+                      <p className="text-xs font-semibold mb-1">{pmLabels[pm] || pm}</p>
+                      <p className="text-lg font-bold">{data.qty} <span className="text-xs font-normal">porsi</span></p>
+                      <p className="text-xs font-medium mt-0.5">{formatCurrency(data.total)}</p>
+                    </div>
+                  ))}
+                  {/* Total card */}
+                  <div className="rounded-xl p-3 border-2 border-primary/30 bg-primary/5">
+                    <p className="text-xs font-semibold text-primary mb-1">📊 Total</p>
+                    <p className="text-lg font-bold">{filteredStats.reduce((a, i) => a + i.quantity, 0)} <span className="text-xs font-normal">porsi</span></p>
+                    <p className="text-xs font-medium mt-0.5 text-primary">{formatCurrency(filteredStats.reduce((a, i) => a + i.total, 0))}</p>
+                  </div>
+                </div>
+              )}
+
+              {filteredStats.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">
+                  <ShoppingBag className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">Tidak ada data yang sesuai filter</p>
+                </div>
+              ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-border">
+                    <tr className="border-b border-border bg-secondary/20">
                       <th className="text-left py-3 px-4 text-sm font-semibold">Nama Menu</th>
                       <th className="text-left py-3 px-4 text-sm font-semibold">Variasi Kuah</th>
                       <th className="text-left py-3 px-4 text-sm font-semibold">Tipe</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold">Pembayaran</th>
                       <th className="text-right py-3 px-4 text-sm font-semibold">Terjual</th>
                       <th className="text-right py-3 px-4 text-sm font-semibold">Total Penjualan</th>
                     </tr>
@@ -1896,7 +2066,6 @@ export default function ReportsPage() {
                     {grouped.map((group, gIdx) => {
                       const groupTotal = group.items.reduce((a: number, i: any) => a + i.total, 0);
                       const groupQty = group.items.reduce((a: number, i: any) => a + i.quantity, 0);
-                      const hasVariants = group.items.some((i: any) => i.kuahVariant);
                       const isMultiRow = group.items.length > 1;
 
                       return (
@@ -1904,14 +2073,14 @@ export default function ReportsPage() {
                           {/* Group header row: shown when menu has multiple variant/tipe rows */}
                           {isMultiRow && (
                             <tr key={`group-${gIdx}`} className="bg-secondary/20 border-t-2 border-border">
-                              <td className="py-2 px-4 text-sm font-bold text-foreground" colSpan={3}>
+                              <td className="py-2 px-4 text-sm font-bold text-foreground" colSpan={4}>
                                 🍽️ {group.name}
                               </td>
                               <td className="py-2 px-4 text-sm text-right font-bold text-muted-foreground">{groupQty}</td>
                               <td className="py-2 px-4 text-sm text-right font-bold text-success">{formatCurrency(groupTotal)}</td>
                             </tr>
                           )}
-                          {/* Sub-rows per variant + packaging type */}
+                          {/* Sub-rows per variant + packaging type + payment */}
                           {group.items.map((item: any, iIdx: number) => (
                             <tr
                               key={`${gIdx}-${iIdx}`}
@@ -1944,6 +2113,12 @@ export default function ReportsPage() {
                                   </span>
                                 )}
                               </td>
+                              {/* Payment Method badge */}
+                              <td className="py-2.5 px-4 text-sm">
+                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${pmColors[item.paymentMethod] || 'bg-secondary text-foreground border-border'}`}>
+                                  {pmLabels[item.paymentMethod] || item.paymentMethod || '-'}
+                                </span>
+                              </td>
                               <td className="py-2.5 px-4 text-sm text-right font-medium">{item.quantity}</td>
                               <td className="py-2.5 px-4 text-sm text-right font-semibold text-success">
                                 {formatCurrency(item.total)}
@@ -1955,17 +2130,18 @@ export default function ReportsPage() {
                     })}
                     {/* Grand Total row */}
                     <tr className="bg-secondary/30 font-bold border-t-2 border-border">
-                      <td className="py-3 px-4 text-sm" colSpan={3}>Total Keseluruhan</td>
+                      <td className="py-3 px-4 text-sm" colSpan={4}>Total {hasActiveFilter ? '(Terfilter)' : 'Keseluruhan'}</td>
                       <td className="py-3 px-4 text-sm text-right">
-                        {(menuStats as any[]).reduce((acc, curr) => acc + curr.quantity, 0)}
+                        {filteredStats.reduce((acc, curr) => acc + curr.quantity, 0)}
                       </td>
                       <td className="py-3 px-4 text-sm text-right text-success">
-                        {formatCurrency((menuStats as any[]).reduce((acc, curr) => acc + curr.total, 0))}
+                        {formatCurrency(filteredStats.reduce((acc, curr) => acc + curr.total, 0))}
                       </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           );
         })()}

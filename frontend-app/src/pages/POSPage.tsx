@@ -189,13 +189,43 @@ export default function POSPage() {
       setPaymentMethod(order.payment_method || 'cash');
       setPaidAmount(order.paid_amount ? String(order.paid_amount) : '');
 
-      // Map items
-      const cartItems: CartItem[] = order.items.map((item: any) => ({
-        menuItem: item.menu_item,
-        quantity: item.quantity,
-        note: item.note,
-        is_takeaway: !!item.is_takeaway
-      }));
+      // Map items — restore variant/kuah from note
+      const cartItems: CartItem[] = order.items.map((item: any) => {
+        const noteText = item.note || '';
+
+        // Extract kuah variant from note: "Kuah: Bening. User note here"
+        const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/);
+        const variantName = kuahMatch ? kuahMatch[1].trim() : undefined;
+
+        // Separate user note from kuah prefix
+        const userNote = noteText
+          .replace(/Kuah:\s*[^.]+\.?\s*/i, '')
+          .trim() || undefined;
+
+        // Try to find variant price from menu item variants
+        let variantPrice = 0;
+        if (variantName && item.menu_item?.variants?.length > 0) {
+          const foundVariant = item.menu_item.variants.find(
+            (v: any) => v.name === variantName
+          );
+          if (foundVariant) {
+            variantPrice = Number(foundVariant.price) || 0;
+            // Legacy: Bakso Iga variants always price 0
+            if (item.menu_item.name?.toLowerCase().includes('iga') && !item.menu_item.variants?.length) {
+              variantPrice = 0;
+            }
+          }
+        }
+
+        return {
+          menuItem: item.menu_item,
+          quantity: item.quantity,
+          note: userNote,
+          is_takeaway: !!item.is_takeaway,
+          variant: variantName,
+          variant_price: variantPrice,
+        };
+      });
       setCart(cartItems);
 
       // Clear location state
