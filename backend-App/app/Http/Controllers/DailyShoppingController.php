@@ -6,6 +6,7 @@ use App\Models\DailyShopping;
 use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class DailyShoppingController extends Controller
 {
@@ -50,9 +51,16 @@ class DailyShoppingController extends Controller
                 'items.*.notes' => 'nullable|string',
                 'items.*.inventory_item_id' => 'nullable|exists:inventory_items,id',
                 'user_id' => 'nullable|exists:users,id', // Allow selecting purchaser
+                'receipt_image' => 'nullable|string', // Base64 image
             ]);
 
             $buyerId = $request->filled('user_id') ? $request->user_id : $user->id;
+            
+            $imagePath = null;
+            if (!empty($validated['receipt_image'])) {
+                $imagePath = $this->saveBase64Image($validated['receipt_image']);
+            }
+
             $createdItems = [];
             
             DB::transaction(function () use ($validated, $buyerId, $storeId, &$createdItems) {
@@ -71,6 +79,7 @@ class DailyShoppingController extends Controller
                         'status' => 'baru',
                         'notes' => $itemData['notes'] ?? null,
                         'shopping_date' => $validated['shopping_date'],
+                        'image_path' => $imagePath,
                     ]);
                     
                     $createdItems[] = $shoppingItem;
@@ -149,13 +158,14 @@ class DailyShoppingController extends Controller
             'notes' => 'nullable|string',
             'user_id' => 'nullable|exists:users,id',
             'shopping_date' => 'required|date',
+            'receipt_image' => 'nullable|string',
         ]);
 
         $item = DailyShopping::findOrFail($id);
 
         $totalPrice = $validated['quantity'] * $validated['price_per_unit'];
-
-        $item->update([
+        
+        $updateData = [
             'item_name' => $validated['item_name'],
             'quantity' => $validated['quantity'],
             'unit' => $validated['unit'],
@@ -164,7 +174,20 @@ class DailyShoppingController extends Controller
             'notes' => $validated['notes'] ?? null,
             'user_id' => $validated['user_id'] ?? $item->user_id, // Keep old user if not provided
             'shopping_date' => $validated['shopping_date'],
-        ]);
+        ];
+
+        if (!empty($validated['receipt_image'])) {
+            $imagePath = $this->saveBase64Image($validated['receipt_image']);
+            if ($imagePath) {
+                // Hapus gambar lama jika ada
+                if ($item->image_path) {
+                    Storage::disk('public')->delete($item->image_path);
+                }
+                $updateData['image_path'] = $imagePath;
+            }
+        }
+
+        $item->update($updateData);
 
         return response()->json($item->load('user'));
     }
@@ -358,5 +381,19 @@ class DailyShoppingController extends Controller
         $users = $query->get();
 
         return response()->json($users);
+    }
+
+    private function saveBase64Image($base64String)
+    {
+        if (preg_match('/^data:image\/(\w+);base64,/', $base64String, $type)) {
+            $data = substr($base64String, strpos($base64String, ',') + 1);
+            $data = base64_decode($data);
+            if ($data === false) return null;
+            $extension = strtolower($type[1]);
+            $filename = 'daily_shopping_receipts/' . uniqid() . '.' . $extension;
+            Storage::disk('public')->put($filename, $data);
+            return $filename;
+        }
+        return null;
     }
 }

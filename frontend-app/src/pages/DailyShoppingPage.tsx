@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,8 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
+import api from '@/lib/api';
+import { compressImageToWebp } from '@/lib/utils';
 
 const MySwal = withReactContent(Swal);
 import { MainLayout } from "@/components/layout/MainLayout";
@@ -46,6 +48,7 @@ interface ShoppingItem {
     total_price: number;
     status: "baru" | "habis" | "sisa" | "belum_digunakan";
     notes: string | null;
+    image_path?: string;
     shopping_date: string;
     user: {
         id: number;
@@ -105,18 +108,17 @@ const DailyShoppingPage = () => {
     const [priceInputMode, setPriceInputMode] = useState<'total' | 'unit'>('total');
     const [editingItem, setEditingItem] = useState<ShoppingItem | null>(null);
     const [isEditOpen, setIsEditOpen] = useState(false);
+    const [viewImage, setViewImage] = useState<string | null>(null);
     const [rowsToAdd, setRowsToAdd] = useState<number>(1);
+    
+    // Receipt Image state (Base64 WEBP)
+    const [receiptImage, setReceiptImage] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const fetchInventory = async () => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch("http://localhost:8000/api/inventory?type=stock", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setInventoryItems(data);
-            }
+            const response = await api.get("/inventory?type=stock");
+            setInventoryItems(response.data);
         } catch (error) {
             console.error("Error fetching inventory:", error);
         }
@@ -124,14 +126,8 @@ const DailyShoppingPage = () => {
 
     const fetchUsers = async () => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch("http://localhost:8000/api/daily-shopping/users", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setUsers(data);
-            }
+            const response = await api.get("/daily-shopping/users");
+            setUsers(response.data);
         } catch (error) {
             console.error("Error fetching users:", error);
         }
@@ -139,17 +135,8 @@ const DailyShoppingPage = () => {
 
     const fetchMonthlyRecap = async () => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(
-                `http://localhost:8000/api/daily-shopping/monthly-recap?date=${selectedDate}`,
-                {
-                    headers: { Authorization: `Bearer ${token}` }
-                }
-            );
-            if (response.ok) {
-                const data = await response.json();
-                setMonthlyRecap(data);
-            }
+            const response = await api.get(`/daily-shopping/monthly-recap?date=${selectedDate}`);
+            setMonthlyRecap(response.data);
         } catch (error) {
             console.error("Error fetching recap:", error);
         }
@@ -157,21 +144,8 @@ const DailyShoppingPage = () => {
 
     const fetchItems = async () => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(
-                `http://localhost:8000/api/daily-shopping?date=${selectedDate}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                }
-            );
-
-            if (!response.ok) throw new Error("Failed to fetch items");
-
-            const data = await response.json();
-            setItems(data);
+            const response = await api.get(`/daily-shopping?date=${selectedDate}`);
+            setItems(response.data);
         } catch (error) {
             console.error("Error fetching items:", error);
             toast({
@@ -186,21 +160,8 @@ const DailyShoppingPage = () => {
 
     const fetchStatistics = async () => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(
-                `http://localhost:8000/api/daily-shopping/statistics?date=${selectedDate}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                }
-            );
-
-            if (!response.ok) throw new Error("Failed to fetch statistics");
-
-            const data = await response.json();
-            setStatistics(data);
+            const response = await api.get(`/daily-shopping/statistics?date=${selectedDate}`);
+            setStatistics(response.data);
         } catch (error) {
             console.error("Error fetching statistics:", error);
         }
@@ -240,6 +201,28 @@ const DailyShoppingPage = () => {
     }, [selectedBuyer]);
 
     // Batch Form Handlers
+    const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) {
+            setReceiptImage(null);
+            return;
+        }
+
+        try {
+            const webpBase64 = await compressImageToWebp(file);
+            setReceiptImage(webpBase64);
+        } catch (error) {
+            console.error("Failed to compress image:", error);
+            toast({
+                title: "Error",
+                description: "Gagal memproses gambar struk.",
+                variant: "destructive",
+            });
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            setReceiptImage(null);
+        }
+    };
+
     const handleAddItemRow = () => {
         const count = Math.max(1, Math.min(rowsToAdd, 50)); // batasi maksimal 50 baris sekaligus
         const newRows = Array.from({ length: count }, () => ({
@@ -350,17 +333,11 @@ const DailyShoppingPage = () => {
             if (selectedBuyer) {
                 payload.user_id = selectedBuyer;
             }
+            if (receiptImage) {
+                payload.receipt_image = receiptImage;
+            }
 
-            const response = await fetch("http://localhost:8000/api/daily-shopping", {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) throw new Error("Failed to add items");
+            await api.post("/daily-shopping", payload);
 
             setIsDialogOpen(false);
 
@@ -374,11 +351,11 @@ const DailyShoppingPage = () => {
             });
 
             // Reset form
-            // Reset form and clear storage
-            // Reset form and clear storage
             const defaultItems = [{ item_name: "", quantity: "", unit: "pcs", price_per_unit: "", total_price: "", notes: "", inventory_item_id: "" }];
             setFormItems(defaultItems);
             setSelectedBuyer(""); // Reset buyer
+            setReceiptImage(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
 
             localStorage.removeItem('dailyShoppingItems');
             localStorage.removeItem('dailyShoppingBuyer');
@@ -398,20 +375,7 @@ const DailyShoppingPage = () => {
 
     const handleStatusUpdate = async (id: number, status: string) => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(
-                `http://localhost:8000/api/daily-shopping/${id}/status`,
-                {
-                    method: "PUT",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({ status }),
-                }
-            );
-
-            if (!response.ok) throw new Error("Failed to update status");
+            await api.put(`/daily-shopping/${id}/status`, { status });
 
             const Toast = MySwal.mixin({
                 toast: true,
@@ -454,19 +418,7 @@ const DailyShoppingPage = () => {
         if (!result.isConfirmed) return;
 
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(
-                `http://localhost:8000/api/daily-shopping/${id}`,
-                {
-                    method: "DELETE",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                }
-            );
-
-            if (!response.ok) throw new Error("Failed to delete item");
+            await api.delete(`/daily-shopping/${id}`);
 
             MySwal.fire(
                 'Terhapus!',
@@ -497,25 +449,21 @@ const DailyShoppingPage = () => {
         if (!editingItem) return;
 
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(`http://localhost:8000/api/daily-shopping/${editingItem.id}`, {
-                method: "PUT",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    item_name: editingItem.item_name,
-                    quantity: editingItem.quantity,
-                    unit: editingItem.unit,
-                    price_per_unit: editingItem.price_per_unit,
-                    notes: editingItem.notes,
-                    user_id: editingItem.user?.id, // Assuming backend accepts user_id
-                    shopping_date: editingItem.shopping_date // Keep existing date or update if editable
-                }),
-            });
+            const payload: any = {
+                item_name: editingItem.item_name,
+                quantity: editingItem.quantity,
+                unit: editingItem.unit,
+                price_per_unit: editingItem.price_per_unit,
+                notes: editingItem.notes,
+                user_id: editingItem.user?.id,
+                shopping_date: editingItem.shopping_date
+            };
+            
+            if (receiptImage) {
+                payload.receipt_image = receiptImage;
+            }
 
-            if (!response.ok) throw new Error("Failed to update item");
+            await api.put(`/daily-shopping/${editingItem.id}`, payload);
 
             MySwal.fire({
                 icon: 'success',
@@ -555,17 +503,8 @@ const DailyShoppingPage = () => {
         if (!result.isConfirmed) return;
 
         try {
-            const token = localStorage.getItem("token");
-            // Delete items sequentially or look for a bulk delete API. 
-            // Since we don't have a bulk delete, we'll delete partially or iterate.
             await Promise.all(items.map(async (item) => {
-                await fetch(`http://localhost:8000/api/daily-shopping/${item.id}`, {
-                    method: "DELETE",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                });
+                await api.delete(`/daily-shopping/${item.id}`);
             }));
 
             MySwal.fire(
@@ -611,19 +550,11 @@ const DailyShoppingPage = () => {
 
     const handleExport = async () => {
         try {
-            const token = localStorage.getItem("token");
-            const response = await fetch(
-                `http://localhost:8000/api/daily-shopping/export?date=${selectedDate}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                    },
-                }
-            );
+            const response = await api.get(`/daily-shopping/export?date=${selectedDate}`, {
+                responseType: 'blob'
+            });
 
-            if (!response.ok) throw new Error("Failed to export");
-
-            const blob = await response.blob();
+            const blob = new Blob([response.data]);
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -856,6 +787,22 @@ const DailyShoppingPage = () => {
                                         </Table>
                                     </div >
 
+                                    {/* Upload Struk (Batch) */}
+                                    <div className="flex flex-col gap-2 p-4 border rounded-lg bg-slate-50">
+                                        <Label>Upload Struk Belanja (Opsional - Berlaku untuk semua item di atas)</Label>
+                                        <Input 
+                                            type="file" 
+                                            accept="image/*" 
+                                            onChange={handleImageChange}
+                                            ref={fileInputRef}
+                                        />
+                                        {receiptImage && (
+                                            <div className="mt-2">
+                                                <img src={receiptImage} alt="Preview Struk" className="h-32 object-contain rounded border" />
+                                            </div>
+                                        )}
+                                    </div>
+
                                     <div className="flex justify-between items-center">
                                         <div className="flex items-center gap-2">
                                             <Button type="button" variant="outline" onClick={handleAddItemRow}>
@@ -978,7 +925,26 @@ const DailyShoppingPage = () => {
                                                 onChange={(e) => setEditingItem({ ...editingItem, notes: e.target.value })}
                                             />
                                         </div>
-                                        <div className="flex justify-end gap-2">
+                                        
+                                        <div className="flex flex-col gap-2 p-4 border rounded-lg bg-slate-50 mt-2">
+                                            <Label>Update Foto Struk (Opsional)</Label>
+                                            <Input 
+                                                type="file" 
+                                                accept="image/*" 
+                                                onChange={handleImageChange}
+                                            />
+                                            {(receiptImage || editingItem.image_path) && (
+                                                <div className="mt-2">
+                                                    <img 
+                                                        src={receiptImage || `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/storage/${editingItem.image_path}`} 
+                                                        alt="Preview Struk" 
+                                                        className="h-32 object-contain rounded border" 
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="flex justify-end gap-2 mt-4">
                                             <Button type="button" variant="ghost" onClick={() => setIsEditOpen(false)}>Batal</Button>
                                             <Button type="submit">Simpan Perubahan</Button>
                                         </div>
@@ -1119,6 +1085,16 @@ const DailyShoppingPage = () => {
                                                     )}
                                                 </div>
                                                 <div className="flex flex-col gap-2">
+                                                    {item.image_path && (
+                                                        <Button
+                                                            variant="secondary"
+                                                            size="sm"
+                                                            onClick={() => setViewImage(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/storage/${item.image_path}`)}
+                                                            className="mb-2"
+                                                        >
+                                                            Lihat Foto
+                                                        </Button>
+                                                    )}
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
@@ -1220,6 +1196,18 @@ const DailyShoppingPage = () => {
                         </Table>
                     </CardContent>
                 </Card >
+
+                <Dialog open={!!viewImage} onOpenChange={() => setViewImage(null)}>
+                    <DialogContent className="max-w-3xl">
+                        <DialogHeader>
+                            <DialogTitle>Foto Bukti / Struk</DialogTitle>
+                        </DialogHeader>
+                        {viewImage && (
+                            <img src={viewImage} alt="Bukti Belanja" className="w-full h-auto rounded-lg" />
+                        )}
+                    </DialogContent>
+                </Dialog>
+
             </div >
         </MainLayout >
     );
