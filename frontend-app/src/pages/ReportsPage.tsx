@@ -1891,7 +1891,10 @@ export default function ReportsPage() {
           const filteredStats = (menuStats as any[]).filter(item => {
             if (menuFilter.packagingType !== 'all' && item.packagingType !== menuFilter.packagingType) return false;
             if (menuFilter.paymentMethod !== 'all' && item.paymentMethod !== menuFilter.paymentMethod) return false;
-            if (menuFilter.kuahVariant !== 'all' && item.kuahVariant !== menuFilter.kuahVariant) return false;
+            if (menuFilter.kuahVariant !== 'all') {
+              if (menuFilter.kuahVariant === 'none' && item.kuahVariant !== '') return false;
+              if (menuFilter.kuahVariant !== 'none' && item.kuahVariant !== menuFilter.kuahVariant) return false;
+            }
             if (menuFilter.category !== 'all') {
               const cat = (item.category || '').toLowerCase();
               const name = (item.name || '').toLowerCase();
@@ -2015,7 +2018,7 @@ export default function ReportsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Semua Variasi</SelectItem>
-                        <SelectItem value="">Tanpa Variasi</SelectItem>
+                        <SelectItem value="none">Tanpa Variasi</SelectItem>
                         {allKuahVariants.map(v => (
                           <SelectItem key={v} value={v}>🍜 {v}</SelectItem>
                         ))}
