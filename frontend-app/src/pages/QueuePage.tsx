@@ -247,11 +247,17 @@ const QueuePage = () => {
     }, []);
 
     // Fungsi Text-to-Speech - hanya untuk makanan (food)
-    const speakOrderCompleted = (customerName: string, isTakeaway: boolean) => {
+    // Jika dine_in: cukup panggil nama saja (tanpa "Makan Sini")
+    // Jika takeaway atau ada item bungkus: panggil nama + "Dibungkus"
+    const speakOrderCompleted = (customerName: string, order: QueueOrder) => {
         if ('speechSynthesis' in window) {
             window.speechSynthesis.cancel();
-            const actionText = isTakeaway ? "Dibungkus" : "Makan Sini";
-            const textToSpeak = `Pesanan atas nama ${customerName}, ${actionText}`;
+            const isFullTakeaway = order.order_type === 'takeaway';
+            const hasAnyTakeawayItem = order.items.some(i => i.is_takeaway);
+            let textToSpeak = `Pesanan atas nama ${customerName}`;
+            if (isFullTakeaway || hasAnyTakeawayItem) {
+                textToSpeak += `, Dibungkus`;
+            }
             const utterance = new SpeechSynthesisUtterance(textToSpeak);
             utterance.lang = 'id-ID';
             utterance.rate = 0.9;
@@ -286,7 +292,7 @@ const QueuePage = () => {
                 const order = orders.find(o => o.id === orderId);
                 if (order && order.customer_name) {
                     // TTS hanya untuk makanan
-                    speakOrderCompleted(order.customer_name, order.order_type === 'takeaway');
+                    speakOrderCompleted(order.customer_name, order);
                 }
             }
 

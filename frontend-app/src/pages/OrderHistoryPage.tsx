@@ -119,14 +119,17 @@ const OrderHistoryPage = () => {
     }, [selectedDate, statusFilter]);
 
     // TTS Logic
-    const speakOrderCompleted = (customerName: string, isTakeaway: boolean) => {
+    // Dine-in: panggil nama + selesai (tanpa "Makan Disini")
+    // Takeaway / ada item bungkus: panggil nama + Dibungkus
+    const speakOrderCompleted = (customerName: string, isTakeaway: boolean, items?: OrderItem[]) => {
         if ('speechSynthesis' in window) {
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance();
-            if (isTakeaway) {
-                utterance.text = `Pesanan atas nama ${customerName}, selesai. Silakan diambil.`;
+            const hasAnyTakeawayItem = items?.some(i => i.is_takeaway) || false;
+            if (isTakeaway || hasAnyTakeawayItem) {
+                utterance.text = `Pesanan atas nama ${customerName}, Dibungkus. Silakan diambil.`;
             } else {
-                utterance.text = `Pesanan atas nama ${customerName}, selesai. Terima kasih telah memesan di Bakso Bento Malang.`;
+                utterance.text = `Pesanan atas nama ${customerName}, selesai.`;
             }
             utterance.lang = 'id-ID';
             utterance.rate = 0.9;
@@ -356,7 +359,7 @@ const OrderHistoryPage = () => {
                                                             className="h-8 w-8 text-muted-foreground hover:text-primary"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                speakOrderCompleted(order.customer_name, order.order_type === 'takeaway');
+                                                                speakOrderCompleted(order.customer_name, order.order_type === 'takeaway', order.items);
                                                             }}
                                                             title="Panggil Ulang (TTS)"
                                                         >

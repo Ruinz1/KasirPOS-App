@@ -587,12 +587,13 @@ export default function ReportsPage() {
             order.payment_method === 'qris' ? 'Transfer' :
               order.payment_method;
 
-        // Extract kuah variant from note
+        // Extract kuah variant from note — ONLY for bakso menus
         const noteText = item.note || '';
+        const isBaksoMenu = baseMenuName.toLowerCase().includes('bakso');
         const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/);
-        const kuahVariant = kuahMatch ? kuahMatch[1].trim() : '';
+        const kuahVariant = (isBaksoMenu && kuahMatch) ? kuahMatch[1].trim() : '';
 
-        // Build display name: combine menu name with kuah variant if present
+        // Build display name: combine menu name with kuah variant only for bakso
         const displayName = kuahVariant
           ? `${baseMenuName} Kuah ${kuahVariant}`
           : baseMenuName;
@@ -654,29 +655,30 @@ export default function ReportsPage() {
     const yy = String(endDate.getFullYear()).slice(-2);
     const exportDateStr = `${dd}/${mm}/${yy}`;
 
-    // Column definitions: 6 columns
-    const NUM_COLS = 6;
-    const COL_NAMES = ['Kode barang', 'Nama barang', 'Keluar', 'Harga pokok', 'Harga Jual', 'Total Penjualan'];
+    // Column definitions: 7 columns (added Pembayaran)
+    const NUM_COLS = 7;
+    const COL_NAMES = ['Kode barang', 'Nama barang', 'Keluar', 'Harga pokok', 'Harga Jual', 'Total Penjualan', 'Pembayaran'];
 
     // Build worksheet as array-of-arrays
     // Row 0 = Title, Row 1 = Header, Row 2..N = Data, Row N+1 = TOTAL, Row N+2 = Date footer
     const wsData: any[][] = [];
-    wsData.push([sheetTitle, '', '', '', '', '']); // Title row (merged)
+    wsData.push([sheetTitle, '', '', '', '', '', '']); // Title row (merged)
     wsData.push(COL_NAMES);                        // Header row
 
     allItems.forEach((item: any) => {
       wsData.push([
         '',             // Kode barang (kosong)
-        item.name,      // Nama barang (termasuk variasi kuah)
+        item.name,      // Nama barang (termasuk variasi kuah jika bakso)
         item.quantity,  // Keluar
         item.cogs,      // Harga pokok
         item.price,     // Harga Jual
-        item.totalSales // Total Penjualan
+        item.totalSales, // Total Penjualan
+        item.payment    // Pembayaran (Cash/Transfer/Card)
       ]);
     });
 
-    wsData.push(['', 'TOTAL', totalKeluar, totalHargaPokok, totalHargaJual, totalPenjualan]); // TOTAL row
-    wsData.push([exportDateStr, '', '', '', '', '']); // Footer date
+    wsData.push(['', 'TOTAL', totalKeluar, totalHargaPokok, totalHargaJual, totalPenjualan, '']); // TOTAL row
+    wsData.push([exportDateStr, '', '', '', '', '', '']); // Footer date
 
     // Create worksheet from aoa
     const wsDetailed = XLSX.utils.aoa_to_sheet(wsData);
@@ -689,6 +691,7 @@ export default function ReportsPage() {
       { wch: 15 }, // Harga pokok
       { wch: 15 }, // Harga Jual
       { wch: 18 }, // Total Penjualan
+      { wch: 14 }, // Pembayaran
     ];
 
     // Merge title row A1:F1
@@ -752,7 +755,7 @@ export default function ReportsPage() {
           fill: { fgColor: { rgb: bgColor } },
           font: { color: { rgb: '000000' } },
           alignment: {
-            horizontal: C === 0 ? 'center' : C === 1 ? 'left' : 'right',
+            horizontal: C === 0 || C === 6 ? 'center' : C === 1 ? 'left' : 'right',
             vertical: 'center'
           },
           border: {

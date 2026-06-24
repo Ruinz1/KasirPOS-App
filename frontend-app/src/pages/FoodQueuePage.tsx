@@ -131,11 +131,16 @@ const FoodQueuePage = () => {
         }
     };
 
-    const speakFoodCompleted = (customerName: string, isTakeaway: boolean) => {
+    const speakFoodCompleted = (customerName: string, order: QueueOrder) => {
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
-            const action = isTakeaway ? "Dibungkus" : "Makan Sini";
-            const utt = new SpeechSynthesisUtterance(`Pesanan atas nama ${customerName}, ${action}`);
+            const isFullTakeaway = order.order_type === 'takeaway';
+            const hasAnyTakeawayItem = order.items.some(i => i.is_takeaway);
+            let text = `Pesanan atas nama ${customerName}`;
+            if (isFullTakeaway || hasAnyTakeawayItem) {
+                text += `, Dibungkus`;
+            }
+            const utt = new SpeechSynthesisUtterance(text);
             utt.lang = "id-ID"; utt.rate = 0.9; utt.pitch = 1;
             const voices = window.speechSynthesis.getVoices();
             const v = voices.find(v => v.lang.includes("id"));
@@ -206,7 +211,7 @@ const FoodQueuePage = () => {
         try {
             if (completed) {
                 const order = orders.find(o => o.id === orderId);
-                if (order?.customer_name) speakFoodCompleted(order.customer_name, order.order_type === "takeaway");
+                if (order?.customer_name) speakFoodCompleted(order.customer_name, order);
             }
             const res = await api.put(`/queue/${orderId}/status`, { queue_status: completed ? "completed" : "pending" });
             if (completed) {
