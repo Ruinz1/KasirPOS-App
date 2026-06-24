@@ -21,6 +21,7 @@ import OrderHistoryPage from "./pages/OrderHistoryPage";
 import DailyShoppingPage from "./pages/DailyShoppingPage";
 import LeavePage from "./pages/LeavePage";
 import TablesPage from "./pages/TablesPage";
+import CashierShiftPage from "./pages/CashierShiftPage";
 import NotFound from "./pages/NotFound";
 import LoginPage from "./pages/LoginPage";
 
@@ -88,6 +89,7 @@ const App = () => (
             <Route path="/queue/drink" element={<ProtectedRoute><DrinkQueuePage /></ProtectedRoute>} />
             <Route path="/order-history" element={<ProtectedRoute><OrderHistoryPage /></ProtectedRoute>} />
             <Route path="/daily-shopping" element={<ProtectedRoute><DailyShoppingPage /></ProtectedRoute>} />
+            <Route path="/cashier-shifts" element={<ProtectedRoute><CashierShiftPage /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
             <Route path="/leaves" element={<ProtectedRoute><LeavePage /></ProtectedRoute>} />
             <Route path="/employees" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />

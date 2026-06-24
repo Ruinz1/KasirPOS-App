@@ -16,6 +16,7 @@ use App\Http\Controllers\QueueController;
 use App\Http\Controllers\OrderHistoryController;
 use App\Http\Controllers\DailyShoppingController;
 use App\Http\Controllers\LeaveController;
+use App\Http\Controllers\CashierShiftController;
 
 // Public routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -105,6 +106,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/leaves/{id}', [LeaveController::class, 'update']);
     Route::delete('/leaves/{id}', [LeaveController::class, 'destroy']);
     Route::get('/leaves/export', [LeaveController::class, 'export']);
+
+    // Cashier Shift routes
+    Route::get('/cashier-shifts', [CashierShiftController::class, 'index']);
+    Route::get('/cashier-shifts/active', [CashierShiftController::class, 'active']);
+    Route::get('/cashier-shifts/summary', [CashierShiftController::class, 'summary']);
+    Route::post('/cashier-shifts/open', [CashierShiftController::class, 'open']);
+    Route::put('/cashier-shifts/{id}/close', [CashierShiftController::class, 'close']);
+    Route::get('/cashier-shifts/{id}', [CashierShiftController::class, 'show']);
 
     // Capital routes
     Route::get('/capital', [CapitalController::class, 'index']);

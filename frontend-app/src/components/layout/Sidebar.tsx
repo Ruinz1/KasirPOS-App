@@ -26,7 +26,8 @@ import {
   CalendarClock,
   Table,
   ChefHat,
-  GlassWater
+  GlassWater,
+  Clock
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -40,6 +41,7 @@ const allMenuItems = [
   { icon: ChefHat, label: 'Antrian Makanan', path: '/queue/food', permission: 'manage_orders' },
   { icon: GlassWater, label: 'Antrian Minuman', path: '/queue/drink', permission: 'manage_orders' },
   { icon: History, label: 'Riwayat Pesanan', path: '/order-history', permission: 'manage_orders' },
+  { icon: Clock, label: 'Shift Kasir', path: '/cashier-shifts', permission: 'manage_orders' },
   { icon: Package, label: 'Inventori', path: '/inventory', permission: 'view_inventory' },
   { icon: ShoppingBag, label: 'Belanja Harian', path: '/daily-shopping', permission: 'view_inventory' },
   { icon: Coffee, label: 'Menu', path: '/menu', permission: 'view_menu' },
