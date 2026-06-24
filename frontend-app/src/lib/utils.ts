@@ -36,3 +36,14 @@ export function compressImageToWebp(file: File, maxWidth = 1200, quality = 0.7):
     reader.readAsDataURL(file);
   });
 }
+
+export function formatItemNote(noteText: string | null | undefined, menuName: string | undefined): string {
+  if (!noteText) return '';
+  const isBakso = menuName?.toLowerCase().includes('bakso');
+  if (!isBakso) {
+    // Remove "Kuah: " or "Variasi: " prefix for non-bakso menus
+    return noteText.replace(/^(?:Kuah|Variasi):\s*/i, '');
+  }
+  return noteText;
+}
+

@@ -63,6 +63,15 @@ interface Statistics {
     total_orders: number;
 }
 
+const formatItemNote = (noteText: string | null | undefined, menuName: string | undefined): string => {
+    if (!noteText) return "";
+    const isBakso = menuName?.toLowerCase().includes("bakso");
+    if (!isBakso) {
+        return noteText.replace(/^(?:Kuah|Variasi):\s*/i, "");
+    }
+    return noteText;
+};
+
 const OrderHistoryPage = () => {
     const [orders, setOrders] = useState<HistoryOrder[]>([]);
     const [statistics, setStatistics] = useState<Statistics>({
@@ -397,7 +406,7 @@ const OrderHistoryPage = () => {
                                                                     </div>
                                                                     {item.note && (
                                                                         <div className="text-xs text-muted-foreground italic pl-4">
-                                                                            - {item.note}
+                                                                            - {formatItemNote(item.note, item.menu_item?.name)}
                                                                         </div>
                                                                     )}
                                                                 </div>

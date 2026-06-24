@@ -290,10 +290,25 @@ export default function ReportsPage() {
           const name = item.menu_item?.name || 'Unknown Item';
           const category = item.menu_item?.category?.toLowerCase() || '';
 
-          // Extract kuah variant from note
+          // Extract variant from note
           const noteText = item.note || '';
-          const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/);
-          const kuahVariant = kuahMatch ? kuahMatch[1].trim() : '';
+          const isBakso = name.toLowerCase().includes('bakso');
+          
+          let displayVariant = '';
+          if (isBakso) {
+            const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/i);
+            const typeMatch = noteText.match(/Tipe:\s*([^.]+)/i);
+            const kuah = kuahMatch ? kuahMatch[1].trim() : '';
+            const tipe = typeMatch ? typeMatch[1].trim() : '';
+            if (kuah && tipe) {
+              displayVariant = `${kuah} (${tipe})`;
+            } else {
+              displayVariant = kuah || tipe || '';
+            }
+          } else {
+            const otherMatch = noteText.match(/^(?:Kuah|Variasi):\s*([^.]+)/i);
+            displayVariant = otherMatch ? otherMatch[1].trim() : '';
+          }
 
           // Determine packaging type:
           // takeaway order = all items dibungkus
@@ -305,14 +320,14 @@ export default function ReportsPage() {
           // Payment method for this order
           const paymentMethod = order.payment_method || 'unknown';
 
-          // Unique key: menu_id + kuah variant + packaging type + payment method
-          const key = `${id}_${kuahVariant}_${packagingType}_${paymentMethod}`;
+          // Unique key: menu_id + variant + packaging type + payment method
+          const key = `${id}_${displayVariant}_${packagingType}_${paymentMethod}`;
 
           if (!items[key]) {
             items[key] = {
               name: name,
               category: category,
-              kuahVariant: kuahVariant,
+              kuahVariant: displayVariant,
               packagingType: packagingType,
               paymentMethod: paymentMethod,
               quantity: 0,
@@ -565,13 +580,13 @@ export default function ReportsPage() {
     // 2. Menu Sales Sheet
     const menuData = (menuStats as any[]).map(item => ({
       'Nama Menu': item.name,
-      'Variasi Kuah': item.kuahVariant || '-',
+      'Variasi': item.kuahVariant || '-',
       'Tipe': item.packagingType || '-',
       'Terjual (Qty)': item.quantity,
       'Total Penjualan (Rp)': item.total
     }));
 
-    // 3. Detailed Sales Report - Group by menu item + kuah variant + payment method
+    // 3. Detailed Sales Report - Group by menu item + variant + payment method
     //    Kolom: Kode barang | Nama barang | Keluar | Harga pokok | Harga Jual | Total Penjualan
     //    Cash items first, then Transfer/QRIS items below
     //    Kuah variant is embedded into Nama barang (e.g. "Bakso Komplit Kuah Iga Presto")
@@ -587,16 +602,33 @@ export default function ReportsPage() {
             order.payment_method === 'qris' ? 'Transfer' :
               order.payment_method;
 
-        // Extract kuah variant from note — ONLY for bakso menus
+        // Extract variants from note
         const noteText = item.note || '';
         const isBaksoMenu = baseMenuName.toLowerCase().includes('bakso');
-        const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/);
-        const kuahVariant = (isBaksoMenu && kuahMatch) ? kuahMatch[1].trim() : '';
+        
+        let kuahVariant = '';
+        let baksoType = '';
+        let otherVariant = '';
+        
+        if (isBaksoMenu) {
+          const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/i);
+          kuahVariant = kuahMatch ? kuahMatch[1].trim() : '';
+          
+          const typeMatch = noteText.match(/Tipe:\s*([^.]+)/i);
+          baksoType = typeMatch ? typeMatch[1].trim() : '';
+        } else {
+          const otherMatch = noteText.match(/^(?:Kuah|Variasi):\s*([^.]+)/i);
+          otherVariant = otherMatch ? otherMatch[1].trim() : '';
+        }
 
-        // Build display name: combine menu name with kuah variant only for bakso
-        const displayName = kuahVariant
-          ? `${baseMenuName} Kuah ${kuahVariant}`
-          : baseMenuName;
+        // Build display name: combine menu name with variants
+        let displayName = baseMenuName;
+        if (isBaksoMenu) {
+          if (kuahVariant) displayName += ` Kuah ${kuahVariant}`;
+          if (baksoType) displayName += ` ${baksoType}`;
+        } else {
+          if (otherVariant) displayName += ` ${otherVariant}`;
+        }
 
         // Create unique key: displayName + paymentMethod
         const key = `${displayName}__${paymentMethod}`;
@@ -2087,7 +2119,7 @@ export default function ReportsPage() {
 
                   {/* Kuah Variant filter */}
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Variasi Kuah</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Variasi</label>
                     <Select value={menuFilter.kuahVariant} onValueChange={val => setMenuFilter(f => ({ ...f, kuahVariant: val }))}>
                       <SelectTrigger className="h-8 text-xs">
                         <SelectValue placeholder="Semua" />
@@ -2096,7 +2128,7 @@ export default function ReportsPage() {
                         <SelectItem value="all">Semua Variasi</SelectItem>
                         <SelectItem value="none">Tanpa Variasi</SelectItem>
                         {allKuahVariants.map(v => (
-                          <SelectItem key={v} value={v}>🍜 {v}</SelectItem>
+                          <SelectItem key={v} value={v}>{v}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -2134,7 +2166,7 @@ export default function ReportsPage() {
                   <thead>
                     <tr className="border-b border-border bg-secondary/20">
                       <th className="text-left py-3 px-4 text-sm font-semibold">Nama Menu</th>
-                      <th className="text-left py-3 px-4 text-sm font-semibold">Variasi Kuah</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold">Variasi</th>
                       <th className="text-left py-3 px-4 text-sm font-semibold">Tipe</th>
                       <th className="text-left py-3 px-4 text-sm font-semibold">Pembayaran</th>
                       <th className="text-right py-3 px-4 text-sm font-semibold">Terjual</th>
@@ -2173,9 +2205,15 @@ export default function ReportsPage() {
                               )}
                               <td className="py-2.5 px-4 text-sm">
                                 {item.kuahVariant ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border border-orange-200 dark:border-orange-700/50">
-                                    🍜 {item.kuahVariant}
-                                  </span>
+                                  item.name.toLowerCase().includes('bakso') ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border border-orange-200 dark:border-orange-700/50">
+                                      🍜 {item.kuahVariant}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-700/50">
+                                      🥤 {item.kuahVariant}
+                                    </span>
+                                  )
                                 ) : (
                                   <span className="text-muted-foreground text-xs italic">-</span>
                                 )}

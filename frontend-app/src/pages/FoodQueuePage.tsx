@@ -87,6 +87,15 @@ const shouldHideOrder = (order: QueueOrder): boolean => {
     return foodCompleted;
 };
 
+const formatItemNote = (noteText: string | null | undefined, menuName: string | undefined): string => {
+    if (!noteText) return "";
+    const isBakso = menuName?.toLowerCase().includes("bakso");
+    if (!isBakso) {
+        return noteText.replace(/^(?:Kuah|Variasi):\s*/i, "");
+    }
+    return noteText;
+};
+
 const FoodQueuePage = () => {
     const [orders, setOrders] = useState<QueueOrder[]>([]);
     const [loading, setLoading] = useState(true);
@@ -401,7 +410,7 @@ const FoodQueuePage = () => {
                                                                 {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
                                                                 {item.is_addon && <span className="text-purple-600 text-[10px] font-bold animate-pulse ml-1">● BARU</span>}
                                                             </div>
-                                                            {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {item.note}</p>}
+                                                            {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {formatItemNote(item.note, item.menu_item?.name)}</p>}
                                                         </div>
                                                     ))}
                                                 </div>

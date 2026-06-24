@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import api from '@/lib/api';
 import {
     Plus,
@@ -46,6 +47,7 @@ interface EditItem {
     is_takeaway: boolean;
     additional_price: number; // variant price
     variant?: string;
+    bakso_type?: string;
 }
 
 interface EditQueueOrderDialogProps {
@@ -113,20 +115,48 @@ export function EditQueueOrderDialog({
         if (!order?.items) return;
 
         const items: EditItem[] = order.items.map((item: any) => {
-            // Parse note to extract variant info
+            // Parse note to extract variant and bakso type
             let variant: string | undefined;
+            let baksoType: string | undefined;
             let userNote = item.note || '';
             let additionalPrice = 0;
 
-            // Check if note contains variant info like "Kuah: Bening"
-            const variantMatch = userNote.match(/^Kuah:\s*([^.]+)/);
+            const menuItem = item.menu_item;
+            const isBaksoMenu = menuItem?.name?.toLowerCase().includes('bakso');
+
+            // 1. Extract Kuah or Variasi prefix
+            const variantMatch = userNote.match(/^(?:Kuah|Variasi):\s*([^.]+)/i);
             if (variantMatch) {
                 variant = variantMatch[1].trim();
-                userNote = userNote.replace(/^Kuah:\s*[^.]+\.?\s*/, '').trim();
+                userNote = userNote.replace(/^(?:Kuah|Variasi):\s*[^.]+\.?\s*/i, '').trim();
+            }
+
+            // 2. Extract Tipe prefix for bakso
+            if (isBaksoMenu) {
+                const typeMatch = userNote.match(/^Tipe:\s*([^.]+)/i);
+                if (typeMatch) {
+                    baksoType = typeMatch[1].trim();
+                    userNote = userNote.replace(/^Tipe:\s*[^.]+\.?\s*/i, '').trim();
+                } else {
+                    // Default to Urat if name has bakso but no type matches in note
+                    baksoType = 'Urat';
+                }
+            }
+
+            // Fallback: If no prefix found, check if it starts with any of the item's known variants
+            if (!variant && menuItem?.variants && menuItem.variants.length > 0) {
+                const sortedVariants = [...menuItem.variants].sort((a, b) => b.name.length - a.name.length);
+                for (const v of sortedVariants) {
+                    const regex = new RegExp(`^${v.name}(?:\\.\\s*|$)`, 'i');
+                    if (regex.test(userNote)) {
+                        variant = v.name;
+                        userNote = userNote.replace(regex, '').trim();
+                        break;
+                    }
+                }
             }
 
             // Calculate additional price from variant (price - base menu price)
-            const menuItem = item.menu_item;
             if (menuItem) {
                 const basePrice = getDiscountedPrice(menuItem);
                 const itemPrice = parseFloat(item.price as any);
@@ -146,6 +176,7 @@ export function EditQueueOrderDialog({
                 is_takeaway: !!item.is_takeaway,
                 additional_price: additionalPrice,
                 variant: variant,
+                bakso_type: baksoType,
             };
         });
 
@@ -260,16 +291,33 @@ export function EditQueueOrderDialog({
             // Increment quantity
             updateQuantity(existingIdx, editItems[existingIdx].quantity + 1);
         } else {
+            // Find default variant
+            const variants = menuItem.variants || [];
+            let variantVal: string | undefined;
+            let vPrice = 0;
+            if (variants.length > 0) {
+                const defaultVariant = variants.find(v => v.status === 'ready');
+                if (defaultVariant) {
+                    variantVal = defaultVariant.name;
+                    vPrice = defaultVariant.price;
+                }
+            }
+
+            const isBakso = menuItem.name.toLowerCase().includes('bakso');
+            const defaultBaksoType = isBakso ? 'Urat' : undefined;
+
             // Add new item
             const newItem: EditItem = {
                 menu_item_id: menuItem.id,
                 menu_item_name: menuItem.name,
                 menu_item_category: menuItem.category || '',
                 quantity: 1,
-                price: discountedPrice,
+                price: discountedPrice + vPrice,
                 note: '',
                 is_takeaway: false,
-                additional_price: 0,
+                additional_price: vPrice,
+                variant: variantVal,
+                bakso_type: defaultBaksoType,
             };
             setEditItems((prev) => [...prev, newItem]);
         }
@@ -284,6 +332,22 @@ export function EditQueueOrderDialog({
     // Replace menu item in order
     const replaceMenuItem = (index: number, newMenuItem: MenuItem) => {
         const discountedPrice = getDiscountedPrice(newMenuItem);
+        
+        // Find default variant
+        const variants = newMenuItem.variants || [];
+        let variantVal: string | undefined;
+        let vPrice = 0;
+        if (variants.length > 0) {
+            const defaultVariant = variants.find(v => v.status === 'ready');
+            if (defaultVariant) {
+                variantVal = defaultVariant.name;
+                vPrice = defaultVariant.price;
+            }
+        }
+
+        const isBakso = newMenuItem.name.toLowerCase().includes('bakso');
+        const defaultBaksoType = isBakso ? 'Urat' : undefined;
+
         setEditItems((prev) =>
             prev.map((item, i) =>
                 i === index
@@ -292,9 +356,10 @@ export function EditQueueOrderDialog({
                         menu_item_id: newMenuItem.id,
                         menu_item_name: newMenuItem.name,
                         menu_item_category: newMenuItem.category || '',
-                        price: discountedPrice,
-                        additional_price: 0,
-                        variant: undefined,
+                        price: discountedPrice + vPrice,
+                        additional_price: vPrice,
+                        variant: variantVal,
+                        bakso_type: defaultBaksoType,
                     }
                     : item
             )
@@ -319,14 +384,22 @@ export function EditQueueOrderDialog({
         try {
             const payload = {
                 items: editItems.map((item) => {
+                    const isBaksoMenu = item.menu_item_name?.toLowerCase().includes('bakso');
+                    
                     // Reconstruct note with variant
-                    let fullNote = '';
+                    let variantNote = '';
                     if (item.variant) {
-                        fullNote = `Kuah: ${item.variant}`;
+                        variantNote = isBaksoMenu ? `Kuah: ${item.variant}` : `Variasi: ${item.variant}`;
                     }
-                    if (item.note) {
-                        fullNote = fullNote ? `${fullNote}. ${item.note}` : item.note;
+                    
+                    // Reconstruct note with bakso type
+                    let typeNote = '';
+                    if (isBaksoMenu && item.bakso_type) {
+                        typeNote = `Tipe: ${item.bakso_type}`;
                     }
+                    
+                    const userNote = item.note || '';
+                    const fullNote = [variantNote, typeNote, userNote].filter(Boolean).join('. ');
 
                     return {
                         menu_item_id: item.menu_item_id,
@@ -460,8 +533,74 @@ export function EditQueueOrderDialog({
                                                         </Badge>
                                                     )}
                                                 </div>
-                                                <div className="text-xs text-muted-foreground">
+                                                <div className="text-xs text-muted-foreground mb-1.5">
                                                     {formatCurrency(item.price)} / item
+                                                </div>
+
+                                                {/* Variant & Tipe Selectors */}
+                                                <div className="flex flex-wrap gap-2 mb-2">
+                                                    {/* Variant Selector */}
+                                                    {(() => {
+                                                        const mItem = menuItems.find(m => m.id === item.menu_item_id);
+                                                        const mVariants = mItem?.variants || [];
+                                                        if (mVariants.length === 0) return null;
+                                                        return (
+                                                            <div className="w-36">
+                                                                <Select
+                                                                    value={item.variant || ''}
+                                                                    onValueChange={(val) => {
+                                                                        setEditItems(prev => prev.map((ei, idx) => {
+                                                                            if (idx === index) {
+                                                                                const foundVariant = mVariants.find(v => v.name === val);
+                                                                                const vPrice = foundVariant?.price || 0;
+                                                                                const basePrice = getDiscountedPrice(mItem!);
+                                                                                return {
+                                                                                    ...ei,
+                                                                                    variant: val,
+                                                                                    additional_price: vPrice,
+                                                                                    price: basePrice + vPrice
+                                                                                };
+                                                                            }
+                                                                            return ei;
+                                                                        }));
+                                                                    }}
+                                                                >
+                                                                    <SelectTrigger className="h-7 text-[10px] bg-background border-border">
+                                                                        <SelectValue placeholder="Pilih Variasi" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {mVariants.map(v => (
+                                                                            <SelectItem key={v.name} value={v.name} className="text-xs">
+                                                                                {v.name} {v.price > 0 ? `(+${formatCurrency(v.price)})` : ''}
+                                                                            </SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            </div>
+                                                        );
+                                                    })()}
+
+                                                    {/* Bakso Type Selector */}
+                                                    {item.menu_item_name.toLowerCase().includes('bakso') && (
+                                                        <div className="w-32">
+                                                            <Select
+                                                                value={item.bakso_type || 'Urat'}
+                                                                onValueChange={(val) => {
+                                                                    setEditItems(prev => prev.map((ei, idx) => 
+                                                                        idx === index ? { ...ei, bakso_type: val } : ei
+                                                                    ));
+                                                                }}
+                                                            >
+                                                                <SelectTrigger className="h-7 text-[10px] bg-background border-border">
+                                                                    <SelectValue placeholder="Tipe" />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="Urat" className="text-xs">Urat</SelectItem>
+                                                                    <SelectItem value="Tenis" className="text-xs">Tenis</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 {/* Note */}

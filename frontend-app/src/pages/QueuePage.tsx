@@ -72,6 +72,15 @@ const isFoodItem = (item: OrderItem) => {
     return !DRINK_CATEGORIES.includes(cat);
 };
 
+const formatItemNote = (noteText: string | null | undefined, menuName: string | undefined): string => {
+    if (!noteText) return "";
+    const isBakso = menuName?.toLowerCase().includes("bakso");
+    if (!isBakso) {
+        return noteText.replace(/^(?:Kuah|Variasi):\s*/i, "");
+    }
+    return noteText;
+};
+
 const isDrinkItem = (item: OrderItem) => {
     const cat = (item.menu_item?.category || "").toLowerCase();
     return DRINK_CATEGORIES.includes(cat);
@@ -666,7 +675,7 @@ const QueuePage = () => {
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
                                                                     {item.is_takeaway && <span className="text-destructive font-semibold ml-1">(Bungkus)</span>}
                                                                     {item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
-                                                                    {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {item.note}</div>}
+                                                                    {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
                                                                 </div>
                                                             ))}
                                                         </div>
@@ -802,7 +811,7 @@ const QueuePage = () => {
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
                                                                     {item.is_takeaway && <span className="text-destructive font-semibold ml-1">(Bungkus)</span>}
                                                                     {item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
-                                                                    {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {item.note}</div>}
+                                                                    {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
                                                                 </div>
                                                             ))}
                                                         </div>

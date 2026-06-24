@@ -32,6 +32,8 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
+import { formatItemNote } from '@/lib/utils';
+
 
 
 
@@ -189,17 +191,22 @@ export default function POSPage() {
       setPaymentMethod(order.payment_method || 'cash');
       setPaidAmount(order.paid_amount ? String(order.paid_amount) : '');
 
-      // Map items — restore variant/kuah from note
+      // Map items — restore variant/kuah & bakso type from note
       const cartItems: CartItem[] = order.items.map((item: any) => {
         const noteText = item.note || '';
 
-        // Extract kuah variant from note: "Kuah: Bening. User note here"
-        const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/);
-        const variantName = kuahMatch ? kuahMatch[1].trim() : undefined;
+        // Extract variant from note (Kuah or Variasi prefix)
+        const variantMatch = noteText.match(/(?:Kuah|Variasi):\s*([^.]+)/i);
+        const variantName = variantMatch ? variantMatch[1].trim() : undefined;
 
-        // Separate user note from kuah prefix
+        // Extract bakso type from note: "Tipe: Urat"
+        const typeMatch = noteText.match(/Tipe:\s*([^.]+)/i);
+        const baksoType = typeMatch ? typeMatch[1].trim() : undefined;
+
+        // Separate user note from prefixes
         const userNote = noteText
-          .replace(/Kuah:\s*[^.]+\.?\s*/i, '')
+          .replace(/^(?:Kuah|Variasi):\s*[^.]+\.?\s*/i, '')
+          .replace(/Tipe:\s*[^.]+\.?\s*/i, '')
           .trim() || undefined;
 
         // Try to find variant price from menu item variants
@@ -224,6 +231,7 @@ export default function POSPage() {
           is_takeaway: !!item.is_takeaway,
           variant: variantName,
           variant_price: variantPrice,
+          bakso_type: baksoType,
         };
       });
       setCart(cartItems);
@@ -448,8 +456,8 @@ export default function POSPage() {
     });
 
   // Helper to generate unique cart item key
-  const getCartItemKey = (menuId: number, isTakeaway?: boolean, variant?: string) => {
-    return `${menuId}_${isTakeaway ? 'takeaway' : 'dinein'}_${variant || 'none'}`;
+  const getCartItemKey = (menuId: number, isTakeaway?: boolean, variant?: string, baksoType?: string) => {
+    return `${menuId}_${isTakeaway ? 'takeaway' : 'dinein'}_${variant || 'none'}_${baksoType || 'none'}`;
   };
 
   // Helper to get variants (strictly from DB)
@@ -476,25 +484,30 @@ export default function POSPage() {
       }
     }
 
-    // Find existing item with same menu, takeaway status, and variant
+    // Default bakso_type if menu is bakso
+    const isBakso = item.name.toLowerCase().includes('bakso');
+    const defaultBaksoType = isBakso ? 'Urat' : undefined;
+
+    // Find existing item with same menu, takeaway status, variant, and bakso_type
     const existing = cart.find((c) =>
       c.menuItem.id === item.id &&
       c.is_takeaway === false && // Default is dine-in when adding
-      c.variant === variantPayload.variant
+      c.variant === variantPayload.variant &&
+      c.bakso_type === defaultBaksoType
     );
 
     if (existing) {
       // Increment quantity of existing matching item
-      const existingKey = getCartItemKey(existing.menuItem.id, existing.is_takeaway, existing.variant);
+      const existingKey = getCartItemKey(existing.menuItem.id, existing.is_takeaway, existing.variant, existing.bakso_type);
       updateCartQuantity(existingKey, existing.quantity + 1);
     } else {
-      setCart([...cart, { menuItem: item, quantity: 1, is_takeaway: false, ...variantPayload }]);
+      setCart([...cart, { menuItem: item, quantity: 1, is_takeaway: false, bakso_type: defaultBaksoType, ...variantPayload }]);
     }
   };
 
   const removeFromCart = (cartKey: string) => {
     setCart(cart.filter((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant);
+      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
       return key !== cartKey;
     }));
   };
@@ -504,7 +517,7 @@ export default function POSPage() {
       removeFromCart(cartKey);
     } else {
       setCart(cart.map((c) => {
-        const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant);
+        const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
         return key === cartKey ? { ...c, quantity } : c;
       }));
     }
@@ -512,14 +525,14 @@ export default function POSPage() {
 
   const updateCartNote = (cartKey: string, note: string) => {
     setCart(cart.map((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant);
+      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
       return key === cartKey ? { ...c, note } : c;
     }));
   };
 
   const updateCartVariant = (cartKey: string, variantName: string) => {
     setCart(prevCart => prevCart.map((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant);
+      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
       if (key === cartKey) {
         const variants = getItemVariants(c.menuItem);
         const variantObj = variants.find(v => v.name === variantName);
@@ -556,7 +569,7 @@ export default function POSPage() {
 
   const toggleCartTakeaway = (cartKey: string) => {
     setCart(cart.map((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant);
+      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
       return key === cartKey ? { ...c, is_takeaway: !c.is_takeaway } : c;
     }));
   };
@@ -682,10 +695,22 @@ export default function POSPage() {
 
     const formatOrderItemsPayload = (cartItems: CartItem[]) => {
       return cartItems.map(c => {
+        const isBaksoMenu = c.menuItem.name.toLowerCase().includes('bakso');
+        
         // Construct note with variant info
-        const variantNote = c.variant ? `Kuah: ${c.variant}` : '';
+        let variantNote = '';
+        if (c.variant) {
+          variantNote = isBaksoMenu ? `Kuah: ${c.variant}` : `Variasi: ${c.variant}`;
+        }
+        
+        // Construct note with bakso type info
+        let typeNote = '';
+        if (isBaksoMenu && c.bakso_type) {
+          typeNote = `Tipe: ${c.bakso_type}`;
+        }
+        
         const userNote = c.note || '';
-        const combinedNote = [variantNote, userNote].filter(Boolean).join('. ');
+        const combinedNote = [variantNote, typeNote, userNote].filter(Boolean).join('. ');
 
         return {
           menu_item_id: c.menuItem.id,
@@ -1073,7 +1098,7 @@ export default function POSPage() {
                               </p>
                               {item.note && (
                                 <p className="text-xs text-muted-foreground italic mt-0.5">
-                                  {item.note}
+                                  {formatItemNote(item.note, item.menu_item?.name)}
                                 </p>
                               )}
                               <p className="text-xs text-muted-foreground mt-0.5">
@@ -1861,7 +1886,7 @@ export default function POSPage() {
               </div>
             ) : (
               cart.map((item) => {
-                const cartKey = getCartItemKey(item.menuItem.id, item.is_takeaway, item.variant);
+                const cartKey = getCartItemKey(item.menuItem.id, item.is_takeaway, item.variant, item.bakso_type);
 
                 return (
                   <div key={cartKey} className="bg-secondary/50 rounded-lg p-4">
@@ -1917,10 +1942,10 @@ export default function POSPage() {
                       </div>
                     </div>
 
-                    {/* Variant Selection for Bakso */}
+                    {/* Variant Selection for Bakso / Others */}
                     {/* Variant Selection */}
                     {getItemVariants(item.menuItem).length > 0 && (
-                      <div className="mb-3">
+                      <div className="mb-2">
                         <Select
                           value={item.variant || ''}
                           onValueChange={(val) => updateCartVariant(cartKey, val)}
@@ -1950,6 +1975,31 @@ export default function POSPage() {
                                 </SelectItem>
                               );
                             })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {/* Tipe Bakso Selection */}
+                    {item.menuItem.name.toLowerCase().includes('bakso') && (
+                      <div className="mb-3">
+                        <Select
+                          value={item.bakso_type || 'Urat'}
+                          onValueChange={(val) => {
+                            setCart(prevCart => prevCart.map(c => {
+                              const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+                              return key === cartKey ? { ...c, bakso_type: val } : c;
+                            }));
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-full bg-background border-border">
+                            <div className="flex justify-between w-full pr-2">
+                              <span>Tipe: {item.bakso_type || 'Urat'}</span>
+                            </div>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Urat" className="text-xs">Tipe: Urat</SelectItem>
+                            <SelectItem value="Tenis" className="text-xs">Tipe: Tenis</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -2341,7 +2391,7 @@ export default function POSPage() {
                                 {item.menu_item.name}
                                 {item.is_takeaway && <span className="text-[9px] uppercase font-normal border border-black px-0.5 rounded-sm">Bungkus</span>}
                               </div>
-                              {item.note && <div className="italic text-[9px] mb-0.5">- {item.note}</div>}
+                              {item.note && <div className="italic text-[9px] mb-0.5">- {formatItemNote(item.note, item.menu_item.name)}</div>}
                               <div className="flex justify-between">
                                 <span>{item.quantity} x {formatCurrency(item.price)}</span>
                                 <span className="font-semibold">{formatCurrency(item.quantity * item.price)}</span>
@@ -2537,7 +2587,7 @@ export default function POSPage() {
                       {item.menu_item.name}
                       {item.is_takeaway && <span className="text-[9px] uppercase font-normal border border-black px-0.5 rounded-sm">Bungkus</span>}
                     </div>
-                    {item.note && <div className="italic text-[9px] mb-0.5">- {item.note}</div>}
+                    {item.note && <div className="italic text-[9px] mb-0.5">- {formatItemNote(item.note, item.menu_item.name)}</div>}
                     <div className="flex justify-between">
                       <span>{item.quantity} x {formatCurrency(item.price)}</span>
                       <span className="font-semibold">{formatCurrency(item.quantity * item.price)}</span>
