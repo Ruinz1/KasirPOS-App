@@ -571,14 +571,17 @@ export default function ReportsPage() {
       'Total Penjualan (Rp)': item.total
     }));
 
-    // 3. Detailed Sales Report - Group by menu item + kuah variant + packaging + payment method
+    // 3. Detailed Sales Report - Group by menu item + kuah variant + payment method
+    //    Kolom: Kode barang | Nama barang | Keluar | Harga pokok | Harga Jual | Total Penjualan
+    //    Cash items first, then Transfer/QRIS items below
+    //    Kuah variant is embedded into Nama barang (e.g. "Bakso Komplit Kuah Iga Presto")
     const groupedData: any = {};
 
     orders.forEach((order) => {
       if (order.status === 'cancelled') return;
 
       order.items.forEach((item: any) => {
-        const menuName = item.menu_item?.name || 'Unknown';
+        const baseMenuName = item.menu_item?.name || 'Unknown';
         const paymentMethod = order.payment_method === 'cash' ? 'Cash' :
           order.payment_method === 'card' ? 'Card' :
             order.payment_method === 'qris' ? 'Transfer' :
@@ -589,18 +592,17 @@ export default function ReportsPage() {
         const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/);
         const kuahVariant = kuahMatch ? kuahMatch[1].trim() : '';
 
-        // Determine packaging type
-        const isDibungkus = (order as any).order_type === 'takeaway' || !!item.is_takeaway;
-        const packagingType = isDibungkus ? 'Dibungkus' : 'Makan Disini';
+        // Build display name: combine menu name with kuah variant if present
+        const displayName = kuahVariant
+          ? `${baseMenuName} Kuah ${kuahVariant}`
+          : baseMenuName;
 
-        // Create unique key: menuName + kuahVariant + packaging + paymentMethod
-        const key = `${menuName}_${kuahVariant}_${packagingType}_${paymentMethod}`;
+        // Create unique key: displayName + paymentMethod
+        const key = `${displayName}__${paymentMethod}`;
 
         if (!groupedData[key]) {
           groupedData[key] = {
-            name: menuName,
-            kuahVariant: kuahVariant,
-            packagingType: packagingType,
+            name: displayName,
             quantity: 0,
             cogs: item.menu_item?.cogs || 0,
             price: item.price,
@@ -614,49 +616,173 @@ export default function ReportsPage() {
       });
     });
 
-    // Convert to array format for Excel
-    const detailedSalesData = Object.values(groupedData).map((item: any) => ({
-      'Nama barang': item.name,
-      'Variasi Kuah': item.kuahVariant || '-',
-      'Tipe': item.packagingType,
-      'Keluar': item.quantity,
-      'Harga pokok': item.cogs,
-      'Harga Jual': item.price,
-      'Total Penjualan': item.totalSales,
-      'Pembayaran': item.payment,
-      'Keterangan': ''
-    }));
-
-    // Sort by Payment Method (Cash first, then Transfer/others) and then by Item Name
-    detailedSalesData.sort((a, b) => {
+    // Convert grouped data to array and sort: Cash first, then Transfer/QRIS, then by name
+    const allItems = Object.values(groupedData) as any[];
+    allItems.sort((a: any, b: any) => {
       const paymentOrder: { [key: string]: number } = { 'Cash': 1, 'Transfer': 2, 'Card': 3 };
-      const pA = paymentOrder[a['Pembayaran']] || 99;
-      const pB = paymentOrder[b['Pembayaran']] || 99;
-
+      const pA = paymentOrder[a.payment] ?? 99;
+      const pB = paymentOrder[b.payment] ?? 99;
       if (pA !== pB) return pA - pB;
-      const nameCompare = a['Nama barang'].localeCompare(b['Nama barang']);
-      if (nameCompare !== 0) return nameCompare;
-      const kuahCompare = (a['Variasi Kuah'] || '').localeCompare(b['Variasi Kuah'] || '');
-      if (kuahCompare !== 0) return kuahCompare;
-      return (a['Tipe'] || '').localeCompare(b['Tipe'] || '');
+      return a.name.localeCompare(b.name);
     });
 
-    // Calculate totals
-    const totalHargaPokok = detailedSalesData.reduce((sum, item) => sum + (Number(item['Harga pokok']) || 0), 0);
-    const totalHargaJual = detailedSalesData.reduce((sum, item) => sum + (Number(item['Harga Jual']) || 0), 0);
-    const totalPenjualan = detailedSalesData.reduce((sum, item) => sum + (Number(item['Total Penjualan']) || 0), 0);
+    // Count how many are Cash (for visual section separation)
+    const cashCount = allItems.filter((i: any) => i.payment === 'Cash').length;
 
-    // Add TOTAL row
-    detailedSalesData.push({
-      'Nama barang': 'TOTAL',
-      'Variasi Kuah': '',
-      'Tipe': '',
-      'Keluar': '',
-      'Harga pokok': totalHargaPokok,
-      'Harga Jual': totalHargaJual,
-      'Total Penjualan': totalPenjualan,
-      'Pembayaran': '',
-      'Keterangan': ''
+    // Calculate totals
+    const totalKeluar = allItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
+    const totalHargaPokok = allItems.reduce((sum: number, item: any) => sum + (Number(item.cogs) || 0), 0);
+    const totalHargaJual = allItems.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0);
+    const totalPenjualan = allItems.reduce((sum: number, item: any) => sum + (Number(item.totalSales) || 0), 0);
+
+    // Build store name and period for the title
+    const storeName = stores.find(s => s.id === Number(filters.store_id))?.name
+      || (user as any)?.store?.name
+      || 'Toko';
+    const startDate = new Date(filters.start_date);
+    const endDate = new Date(filters.end_date);
+    const monthName = startDate.toLocaleDateString('id-ID', { month: 'long' });
+    const yearStr = startDate.getFullYear().toString();
+    const periodLabel = filters.start_date === filters.end_date
+      ? startDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+      : `${monthName} ${yearStr}`;
+    const sheetTitle = `Penjualan ${storeName} (${periodLabel})`;
+
+    // Build export date footer (DD/MM/YY)
+    const dd = String(endDate.getDate()).padStart(2, '0');
+    const mm = String(endDate.getMonth() + 1).padStart(2, '0');
+    const yy = String(endDate.getFullYear()).slice(-2);
+    const exportDateStr = `${dd}/${mm}/${yy}`;
+
+    // Column definitions: 6 columns
+    const NUM_COLS = 6;
+    const COL_NAMES = ['Kode barang', 'Nama barang', 'Keluar', 'Harga pokok', 'Harga Jual', 'Total Penjualan'];
+
+    // Build worksheet as array-of-arrays
+    // Row 0 = Title, Row 1 = Header, Row 2..N = Data, Row N+1 = TOTAL, Row N+2 = Date footer
+    const wsData: any[][] = [];
+    wsData.push([sheetTitle, '', '', '', '', '']); // Title row (merged)
+    wsData.push(COL_NAMES);                        // Header row
+
+    allItems.forEach((item: any) => {
+      wsData.push([
+        '',             // Kode barang (kosong)
+        item.name,      // Nama barang (termasuk variasi kuah)
+        item.quantity,  // Keluar
+        item.cogs,      // Harga pokok
+        item.price,     // Harga Jual
+        item.totalSales // Total Penjualan
+      ]);
+    });
+
+    wsData.push(['', 'TOTAL', totalKeluar, totalHargaPokok, totalHargaJual, totalPenjualan]); // TOTAL row
+    wsData.push([exportDateStr, '', '', '', '', '']); // Footer date
+
+    // Create worksheet from aoa
+    const wsDetailed = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Set column widths
+    wsDetailed['!cols'] = [
+      { wch: 16 }, // Kode barang
+      { wch: 34 }, // Nama barang
+      { wch: 10 }, // Keluar
+      { wch: 15 }, // Harga pokok
+      { wch: 15 }, // Harga Jual
+      { wch: 18 }, // Total Penjualan
+    ];
+
+    // Merge title row A1:F1
+    wsDetailed['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: NUM_COLS - 1 } }
+    ];
+
+    // Row heights
+    const totalDataRows = allItems.length;
+    const totalRowIdx = totalDataRows + 2; // 0-indexed
+    wsDetailed['!rows'] = [
+      { hpt: 26 }, // title
+      { hpt: 20 }, // header
+      ...Array(totalDataRows).fill({ hpt: 18 }), // data rows
+      { hpt: 20 }, // total row
+      { hpt: 14 }, // footer date
+    ];
+
+    // Helper: safely style a cell
+    const styleCell = (ws: any, r: number, c: number, style: any) => {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      if (!ws[addr]) ws[addr] = { v: '', t: 's' };
+      ws[addr].s = style;
+    };
+
+    // --- Title row style (cyan, bold, centered) ---
+    const titleStyle = {
+      fill: { fgColor: { rgb: '00FFFF' } },
+      font: { bold: true, color: { rgb: '000000' }, sz: 13 },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: {
+        top: { style: 'medium', color: { rgb: '000000' } },
+        bottom: { style: 'medium', color: { rgb: '000000' } },
+        left: { style: 'medium', color: { rgb: '000000' } },
+        right: { style: 'medium', color: { rgb: '000000' } }
+      }
+    };
+    for (let C = 0; C < NUM_COLS; C++) styleCell(wsDetailed, 0, C, titleStyle);
+
+    // --- Header row style (green, bold, centered) ---
+    const headerStyle = {
+      fill: { fgColor: { rgb: '92D050' } },
+      font: { bold: true, color: { rgb: '000000' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: {
+        top: { style: 'thin', color: { rgb: '000000' } },
+        bottom: { style: 'thin', color: { rgb: '000000' } },
+        left: { style: 'thin', color: { rgb: '000000' } },
+        right: { style: 'thin', color: { rgb: '000000' } }
+      }
+    };
+    for (let C = 0; C < NUM_COLS; C++) styleCell(wsDetailed, 1, C, headerStyle);
+
+    // --- Data row styles: Cash = white bg, Transfer = light gray bg ---
+    for (let R = 2; R < 2 + totalDataRows; R++) {
+      const itemIndex = R - 2;
+      const isCashRow = itemIndex < cashCount;
+      const bgColor = isCashRow ? 'FFFFFF' : 'F2F2F2';
+      for (let C = 0; C < NUM_COLS; C++) {
+        styleCell(wsDetailed, R, C, {
+          fill: { fgColor: { rgb: bgColor } },
+          font: { color: { rgb: '000000' } },
+          alignment: {
+            horizontal: C === 0 ? 'center' : C === 1 ? 'left' : 'right',
+            vertical: 'center'
+          },
+          border: {
+            top: { style: 'thin', color: { rgb: 'CCCCCC' } },
+            bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },
+            left: { style: 'thin', color: { rgb: 'CCCCCC' } },
+            right: { style: 'thin', color: { rgb: 'CCCCCC' } }
+          }
+        });
+      }
+    }
+
+    // --- TOTAL row style (yellow, bold) ---
+    const totalRowStyle = {
+      fill: { fgColor: { rgb: 'FFFF00' } },
+      font: { bold: true, color: { rgb: '000000' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: {
+        top: { style: 'medium', color: { rgb: '000000' } },
+        bottom: { style: 'medium', color: { rgb: '000000' } },
+        left: { style: 'medium', color: { rgb: '000000' } },
+        right: { style: 'medium', color: { rgb: '000000' } }
+      }
+    };
+    for (let C = 0; C < NUM_COLS; C++) styleCell(wsDetailed, totalRowIdx, C, totalRowStyle);
+
+    // --- Footer date style ---
+    styleCell(wsDetailed, totalRowIdx + 1, 0, {
+      font: { color: { rgb: '000000' }, sz: 10 },
+      alignment: { horizontal: 'left', vertical: 'center' }
     });
 
     // 4. Transactions Sheet with Payment Summary
@@ -690,60 +816,7 @@ export default function ReportsPage() {
     const wsMenu = XLSX.utils.json_to_sheet(menuData);
     XLSX.utils.book_append_sheet(wb, wsMenu, "Penjualan Menu");
 
-    // Detailed Sales Sheet with Styling
-    const wsDetailed = XLSX.utils.json_to_sheet(detailedSalesData);
-
-    // Apply styling to detailed sheet
-    const range = XLSX.utils.decode_range(wsDetailed['!ref'] || 'A1');
-
-    // Set column widths
-    wsDetailed['!cols'] = [
-      { wch: 30 }, // Nama barang
-      { wch: 18 }, // Variasi Kuah
-      { wch: 15 }, // Tipe
-      { wch: 10 }, // Keluar
-      { wch: 15 }, // Harga pokok
-      { wch: 15 }, // Harga Jual
-      { wch: 18 }, // Total Penjualan
-      { wch: 15 }, // Pembayaran
-      { wch: 20 }  // Keterangan
-    ];
-
-    // Style header row (green background)
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const address = XLSX.utils.encode_col(C) + "1";
-      if (!wsDetailed[address]) continue;
-      wsDetailed[address].s = {
-        fill: { fgColor: { rgb: "92D050" } },
-        font: { bold: true, color: { rgb: "000000" } },
-        alignment: { horizontal: "center", vertical: "center" },
-        border: {
-          top: { style: "thin", color: { rgb: "000000" } },
-          bottom: { style: "thin", color: { rgb: "000000" } },
-          left: { style: "thin", color: { rgb: "000000" } },
-          right: { style: "thin", color: { rgb: "000000" } }
-        }
-      };
-    }
-
-    // Style TOTAL row (yellow background) - last row
-    const totalRowNum = range.e.r + 1;
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const address = XLSX.utils.encode_col(C) + totalRowNum;
-      if (!wsDetailed[address]) continue;
-      wsDetailed[address].s = {
-        fill: { fgColor: { rgb: "FFFF00" } },
-        font: { bold: true },
-        alignment: { horizontal: "center", vertical: "center" },
-        border: {
-          top: { style: "thin", color: { rgb: "000000" } },
-          bottom: { style: "thin", color: { rgb: "000000" } },
-          left: { style: "thin", color: { rgb: "000000" } },
-          right: { style: "thin", color: { rgb: "000000" } }
-        }
-      };
-    }
-
+    // Detailed Sales Sheet
     XLSX.utils.book_append_sheet(wb, wsDetailed, "Detail Penjualan Harian");
 
     // Transactions Sheet
