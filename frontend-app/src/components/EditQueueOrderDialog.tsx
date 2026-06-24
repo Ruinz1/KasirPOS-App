@@ -131,15 +131,16 @@ export function EditQueueOrderDialog({
                 userNote = userNote.replace(/^(?:Kuah|Variasi):\s*[^.]+\.?\s*/i, '').trim();
             }
 
-            // 2. Extract Tipe prefix for bakso
-            if (isBaksoMenu) {
+            // 2. Extract Tipe prefix for bakso spesial
+            const isBaksoSpesial = isBaksoMenu && menuItem?.name?.toLowerCase().includes('spesial');
+            if (isBaksoSpesial) {
                 const typeMatch = userNote.match(/^Tipe:\s*([^.]+)/i);
                 if (typeMatch) {
                     baksoType = typeMatch[1].trim();
                     userNote = userNote.replace(/^Tipe:\s*[^.]+\.?\s*/i, '').trim();
                 } else {
-                    // Default to Urat if name has bakso but no type matches in note
-                    baksoType = 'Urat';
+                    // Default to Tenis if name has bakso spesial but no type matches in note
+                    baksoType = 'Tenis';
                 }
             }
 
@@ -303,8 +304,8 @@ export function EditQueueOrderDialog({
                 }
             }
 
-            const isBakso = menuItem.name.toLowerCase().includes('bakso');
-            const defaultBaksoType = isBakso ? 'Urat' : undefined;
+            const isBaksoSpesial = menuItem.name.toLowerCase().includes('bakso') && menuItem.name.toLowerCase().includes('spesial');
+            const defaultBaksoType = isBaksoSpesial ? 'Tenis' : undefined;
 
             // Add new item
             const newItem: EditItem = {
@@ -345,8 +346,8 @@ export function EditQueueOrderDialog({
             }
         }
 
-        const isBakso = newMenuItem.name.toLowerCase().includes('bakso');
-        const defaultBaksoType = isBakso ? 'Urat' : undefined;
+        const isBaksoSpesial = newMenuItem.name.toLowerCase().includes('bakso') && newMenuItem.name.toLowerCase().includes('spesial');
+        const defaultBaksoType = isBaksoSpesial ? 'Tenis' : undefined;
 
         setEditItems((prev) =>
             prev.map((item, i) =>
@@ -394,7 +395,8 @@ export function EditQueueOrderDialog({
                     
                     // Reconstruct note with bakso type
                     let typeNote = '';
-                    if (isBaksoMenu && item.bakso_type) {
+                    const isBaksoSpesial = isBaksoMenu && item.menu_item_name?.toLowerCase().includes('spesial');
+                    if (isBaksoSpesial && item.bakso_type) {
                         typeNote = `Tipe: ${item.bakso_type}`;
                     }
                     
@@ -581,10 +583,10 @@ export function EditQueueOrderDialog({
                                                     })()}
 
                                                     {/* Bakso Type Selector */}
-                                                    {item.menu_item_name.toLowerCase().includes('bakso') && (
+                                                    {item.menu_item_name.toLowerCase().includes('bakso') && item.menu_item_name.toLowerCase().includes('spesial') && (
                                                         <div className="w-32">
                                                             <Select
-                                                                value={item.bakso_type || 'Urat'}
+                                                                value={item.bakso_type || 'Tenis'}
                                                                 onValueChange={(val) => {
                                                                     setEditItems(prev => prev.map((ei, idx) => 
                                                                         idx === index ? { ...ei, bakso_type: val } : ei
@@ -595,8 +597,8 @@ export function EditQueueOrderDialog({
                                                                     <SelectValue placeholder="Tipe" />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
-                                                                    <SelectItem value="Urat" className="text-xs">Urat</SelectItem>
                                                                     <SelectItem value="Tenis" className="text-xs">Tenis</SelectItem>
+                                                                    <SelectItem value="Urat" className="text-xs">Urat</SelectItem>
                                                                 </SelectContent>
                                                             </Select>
                                                         </div>

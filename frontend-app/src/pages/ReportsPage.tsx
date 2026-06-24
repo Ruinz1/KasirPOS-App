@@ -288,6 +288,16 @@ export default function ReportsPage() {
         order.items.forEach((item: any) => {
           const id = item.menu_item_id || item.menu_item?.id;
           const name = item.menu_item?.name || 'Unknown Item';
+          const price = Number(item.price || 0);
+
+          // Exclude plain water other than mineral water, and items with price 0
+          const lowerName = name.toLowerCase();
+          const isAirMineral = lowerName.includes('mineral');
+          const isAirBiasa = lowerName.includes('air') && !isAirMineral;
+          if (price === 0 || isAirBiasa || lowerName.includes('air biasa') || lowerName.includes('air putih')) {
+            return; // Skip this item
+          }
+
           const category = item.menu_item?.category?.toLowerCase() || '';
 
           // Extract variant from note
@@ -525,9 +535,18 @@ export default function ReportsPage() {
       if (order.status === 'cancelled') return;
       order.items.forEach((item: any) => {
         if (!item.menu_item) return;
-        const cat = item.menu_item.category?.toLowerCase() || '';
-        const name = item.menu_item.name?.toLowerCase() || '';
         const price = Number(item.price) || 0;
+        const name = item.menu_item.name || '';
+
+        // Exclude plain water other than mineral water, and items with price 0
+        const lowerName = name.toLowerCase();
+        const isAirMineral = lowerName.includes('mineral');
+        const isAirBiasa = lowerName.includes('air') && !isAirMineral;
+        if (price === 0 || isAirBiasa || lowerName.includes('air biasa') || lowerName.includes('air putih')) {
+          return; // Skip this item
+        }
+
+        const cat = item.menu_item.category?.toLowerCase() || '';
         const qty = Number(item.quantity) || 0;
 
         const isMakanan = cat === 'makanan' || name.includes('bakso') || name.includes('mie') || name.includes('nasi');
@@ -597,6 +616,16 @@ export default function ReportsPage() {
 
       order.items.forEach((item: any) => {
         const baseMenuName = item.menu_item?.name || 'Unknown';
+        const price = Number(item.price) || 0;
+
+        // Exclude plain water other than mineral water, and items with price 0
+        const lowerName = baseMenuName.toLowerCase();
+        const isAirMineral = lowerName.includes('mineral');
+        const isAirBiasa = lowerName.includes('air') && !isAirMineral;
+        if (price === 0 || isAirBiasa || lowerName.includes('air biasa') || lowerName.includes('air putih')) {
+          return; // Skip this item
+        }
+
         const paymentMethod = order.payment_method === 'cash' ? 'Cash' :
           order.payment_method === 'card' ? 'Card' :
             order.payment_method === 'qris' ? 'Transfer' :
@@ -1213,9 +1242,18 @@ export default function ReportsPage() {
             if (order.status === 'cancelled') return;
             order.items.forEach((item: any) => {
               if (!item.menu_item) return;
-              const cat = item.menu_item.category?.toLowerCase() || '';
-              const name = item.menu_item.name?.toLowerCase() || '';
               const price = Number(item.price) || 0;
+              const name = item.menu_item.name || '';
+
+              // Exclude plain water other than mineral water, and items with price 0
+              const lowerName = name.toLowerCase();
+              const isAirMineral = lowerName.includes('mineral');
+              const isAirBiasa = lowerName.includes('air') && !isAirMineral;
+              if (price === 0 || isAirBiasa || lowerName.includes('air biasa') || lowerName.includes('air putih')) {
+                return; // Skip this item
+              }
+
+              const cat = item.menu_item.category?.toLowerCase() || '';
               const qty = Number(item.quantity) || 0;
 
               const isMakanan = cat === 'makanan' || name.includes('bakso') || name.includes('mie') || name.includes('nasi');

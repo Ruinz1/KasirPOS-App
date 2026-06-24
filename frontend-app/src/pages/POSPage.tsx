@@ -199,9 +199,13 @@ export default function POSPage() {
         const variantMatch = noteText.match(/(?:Kuah|Variasi):\s*([^.]+)/i);
         const variantName = variantMatch ? variantMatch[1].trim() : undefined;
 
-        // Extract bakso type from note: "Tipe: Urat"
+        // Extract bakso type from note
+        const isBaksoSpesial = item.menu_item?.name?.toLowerCase().includes('bakso') && item.menu_item?.name?.toLowerCase().includes('spesial');
         const typeMatch = noteText.match(/Tipe:\s*([^.]+)/i);
-        const baksoType = typeMatch ? typeMatch[1].trim() : undefined;
+        let baksoType = typeMatch ? typeMatch[1].trim() : undefined;
+        if (isBaksoSpesial && !baksoType) {
+          baksoType = 'Tenis';
+        }
 
         // Separate user note from prefixes
         const userNote = noteText
@@ -484,9 +488,9 @@ export default function POSPage() {
       }
     }
 
-    // Default bakso_type if menu is bakso
-    const isBakso = item.name.toLowerCase().includes('bakso');
-    const defaultBaksoType = isBakso ? 'Urat' : undefined;
+    // Default bakso_type if menu is bakso and contains "spesial"
+    const isBaksoSpesial = item.name.toLowerCase().includes('bakso') && item.name.toLowerCase().includes('spesial');
+    const defaultBaksoType = isBaksoSpesial ? 'Tenis' : undefined;
 
     // Find existing item with same menu, takeaway status, variant, and bakso_type
     const existing = cart.find((c) =>
@@ -705,7 +709,8 @@ export default function POSPage() {
         
         // Construct note with bakso type info
         let typeNote = '';
-        if (isBaksoMenu && c.bakso_type) {
+        const isBaksoSpesial = isBaksoMenu && c.menuItem.name.toLowerCase().includes('spesial');
+        if (isBaksoSpesial && c.bakso_type) {
           typeNote = `Tipe: ${c.bakso_type}`;
         }
         
@@ -1981,10 +1986,10 @@ export default function POSPage() {
                     )}
 
                     {/* Tipe Bakso Selection */}
-                    {item.menuItem.name.toLowerCase().includes('bakso') && (
+                    {item.menuItem.name.toLowerCase().includes('bakso') && item.menuItem.name.toLowerCase().includes('spesial') && (
                       <div className="mb-3">
                         <Select
-                          value={item.bakso_type || 'Urat'}
+                          value={item.bakso_type || 'Tenis'}
                           onValueChange={(val) => {
                             setCart(prevCart => prevCart.map(c => {
                               const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
@@ -1994,12 +1999,12 @@ export default function POSPage() {
                         >
                           <SelectTrigger className="h-8 text-xs w-full bg-background border-border">
                             <div className="flex justify-between w-full pr-2">
-                              <span>Tipe: {item.bakso_type || 'Urat'}</span>
+                              <span>Tipe: {item.bakso_type || 'Tenis'}</span>
                             </div>
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="Urat" className="text-xs">Tipe: Urat</SelectItem>
                             <SelectItem value="Tenis" className="text-xs">Tipe: Tenis</SelectItem>
+                            <SelectItem value="Urat" className="text-xs">Tipe: Urat</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
