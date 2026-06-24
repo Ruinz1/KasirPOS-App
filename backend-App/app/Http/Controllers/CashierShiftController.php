@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CashierShift;
 use App\Models\Order;
+use App\Models\DailyShopping;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -130,6 +131,10 @@ class CashierShiftController extends Controller
         $request->validate([
             'closing_cash' => 'required|numeric|min:0',
             'notes_close' => 'nullable|string|max:500',
+            'adjustments' => 'nullable|array',
+            'adjustments.*.amount' => 'required|numeric|min:0',
+            'adjustments.*.notes' => 'nullable|string|max:255',
+            'adjustments.*.is_shopping' => 'nullable|boolean',
         ]);
 
         $shift = CashierShift::findOrFail($id);
@@ -145,21 +150,45 @@ class CashierShiftController extends Controller
             ], 422);
         }
 
-        // Calculate shift data from orders
-        $shiftData = $shift->calculateShiftData();
-
-        $closingCash = $request->input('closing_cash');
-        $expectedCash = $shiftData['expected_cash'];
-        $discrepancy = $closingCash - $expectedCash;
-
         DB::beginTransaction();
         try {
+            $adjustments = $request->input('adjustments', []);
+            $shift->adjustments = $adjustments;
+
+            // Create daily shopping records for shopping adjustments
+            foreach ($adjustments as $adj) {
+                if (!empty($adj['is_shopping'])) {
+                    DailyShopping::create([
+                        'store_id' => $shift->store_id,
+                        'user_id' => $shift->user_id,
+                        'item_name' => $adj['notes'] ?: 'Belanja Kasir',
+                        'quantity' => 1,
+                        'unit' => 'pcs',
+                        'price_per_unit' => $adj['amount'],
+                        'total_price' => $adj['amount'],
+                        'status' => 'baru',
+                        'notes' => 'Diinput otomatis dari Shift Kasir',
+                        'shopping_date' => $shift->opened_at->format('Y-m-d'),
+                        'cashier_shift_id' => $shift->id,
+                    ]);
+                }
+            }
+
+            // Calculate shift data from orders and newly created shopping records
+            $shiftData = $shift->calculateShiftData();
+
+            $closingCash = $request->input('closing_cash');
+            $expectedCash = $shiftData['expected_cash'];
+            $discrepancy = $closingCash - $expectedCash;
+
             $shift->update([
                 'closed_at' => now(),
                 'closing_cash' => $closingCash,
                 'expected_cash' => $expectedCash,
                 'cash_sales' => $shiftData['cash_sales'],
                 'cash_change' => $shiftData['cash_change'],
+                'qris_sales' => $shiftData['qris_sales'],
+                'card_sales' => $shiftData['card_sales'],
                 'discrepancy' => $discrepancy,
                 'total_transactions' => $shiftData['total_transactions'],
                 'total_revenue' => $shiftData['total_revenue'],
@@ -255,5 +284,150 @@ class CashierShiftController extends Controller
             'avg_discrepancy' => round($avgDiscrepancy, 2),
             'negative_discrepancy_count' => $negativeDiscrepancyCount,
         ]);
+    }
+
+    /**
+     * Update a cashier shift (Edit).
+     */
+    public function update(Request $request, $id)
+    {
+        $user = Auth::user();
+        $shift = CashierShift::findOrFail($id);
+
+        // Only shift owner or admin/owner role can update
+        if ($shift->user_id !== $user->id && !$user->isAdmin() && $user->role !== 'owner') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $request->validate([
+            'opening_cash' => 'sometimes|numeric|min:0',
+            'closing_cash' => 'nullable|numeric|min:0',
+            'notes_open' => 'nullable|string|max:500',
+            'notes_close' => 'nullable|string|max:500',
+            'status' => 'sometimes|in:open,closed',
+            'adjustments' => 'nullable|array',
+            'adjustments.*.amount' => 'required|numeric|min:0',
+            'adjustments.*.notes' => 'nullable|string|max:255',
+            'adjustments.*.is_shopping' => 'nullable|boolean',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            if ($request->has('opening_cash')) {
+                $shift->opening_cash = $request->input('opening_cash');
+            }
+            if ($request->has('closing_cash')) {
+                $shift->closing_cash = $request->input('closing_cash');
+            }
+            if ($request->has('notes_open')) {
+                $shift->notes_open = $request->input('notes_open');
+            }
+            if ($request->has('notes_close')) {
+                $shift->notes_close = $request->input('notes_close');
+            }
+            if ($request->has('status')) {
+                $shift->status = $request->input('status');
+            }
+            
+            // Sync adjustments & daily shopping
+            if ($request->has('adjustments')) {
+                $adjustments = $request->input('adjustments');
+                $shift->adjustments = $adjustments;
+                
+                // Sync daily shopping
+                DailyShopping::where('cashier_shift_id', $shift->id)
+                    ->where('notes', 'Diinput otomatis dari Shift Kasir')
+                    ->delete();
+
+                foreach ($adjustments as $adj) {
+                    if (!empty($adj['is_shopping'])) {
+                        DailyShopping::create([
+                            'store_id' => $shift->store_id,
+                            'user_id' => $shift->user_id,
+                            'item_name' => $adj['notes'] ?: 'Belanja Kasir',
+                            'quantity' => 1,
+                            'unit' => 'pcs',
+                            'price_per_unit' => $adj['amount'],
+                            'total_price' => $adj['amount'],
+                            'status' => 'baru',
+                            'notes' => 'Diinput otomatis dari Shift Kasir',
+                            'shopping_date' => $shift->opened_at->format('Y-m-d'),
+                            'cashier_shift_id' => $shift->id,
+                        ]);
+                    }
+                }
+            }
+
+            // Recalculate shift data if closed or if we want to save latest calculations
+            $shiftData = $shift->calculateShiftData();
+            
+            $shift->cash_sales = $shiftData['cash_sales'];
+            $shift->cash_change = $shiftData['cash_change'];
+            $shift->qris_sales = $shiftData['qris_sales'];
+            $shift->card_sales = $shiftData['card_sales'];
+            $shift->total_transactions = $shiftData['total_transactions'];
+            $shift->total_revenue = $shiftData['total_revenue'];
+            $shift->expected_cash = $shiftData['expected_cash'];
+
+            if ($shift->status === 'closed') {
+                $closingCash = $shift->closing_cash ?? 0;
+                $shift->discrepancy = $closingCash - $shift->expected_cash;
+                if (!$shift->closed_at) {
+                    $shift->closed_at = now();
+                }
+            } else {
+                $shift->closed_at = null;
+                $shift->closing_cash = null;
+                $shift->discrepancy = null;
+            }
+
+            $shift->save();
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Shift berhasil diperbarui',
+                'shift' => $shift->load('user'),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Gagal diperbarui: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete a cashier shift (Delete).
+     */
+    public function destroy($id)
+    {
+        $user = Auth::user();
+        
+        // Only admin/owner can delete
+        if (!$user->isAdmin() && $user->role !== 'owner') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $shift = CashierShift::findOrFail($id);
+
+        DB::beginTransaction();
+        try {
+            // Delete auto-created daily shopping items associated with this shift
+            DailyShopping::where('cashier_shift_id', $shift->id)
+                ->where('notes', 'Diinput otomatis dari Shift Kasir')
+                ->delete();
+
+            $shift->delete();
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Shift berhasil dihapus',
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Gagal menghapus shift: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }

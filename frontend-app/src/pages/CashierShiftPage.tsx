@@ -16,13 +16,14 @@ import {
   BarChart3,
   Users,
   RefreshCw,
-  ChevronDown,
-  ChevronUp,
   Building2,
   Calendar,
   Banknote,
   Timer,
   Activity,
+  Trash2,
+  Plus,
+  Edit,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -51,11 +52,16 @@ interface CashierShift {
   expected_cash: number | null;
   cash_sales: number | null;
   cash_change: number | null;
+  qris_sales: number | null;
+  card_sales: number | null;
+  paylater_sales: number | null;
+  shopping_expenses: number | null;
   discrepancy: number | null;
   total_transactions: number | null;
   total_revenue: number | null;
   notes_open: string | null;
   notes_close: string | null;
+  adjustments: Array<{ amount: number; notes: string; is_shopping: boolean }> | null;
   status: 'open' | 'closed';
   user: ShiftUser;
 }
@@ -65,6 +71,10 @@ interface ShiftLiveData {
   total_revenue: number;
   cash_sales: number;
   cash_change: number;
+  qris_sales: number;
+  card_sales: number;
+  paylater_sales: number;
+  shopping_expenses: number;
   expected_cash: number;
 }
 
@@ -101,13 +111,24 @@ export default function CashierShiftPage() {
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [detailShift, setDetailShift] = useState<CashierShift | null>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingShift, setEditingShift] = useState<CashierShift | null>(null);
 
   // Form state
   const [openingCash, setOpeningCash] = useState('');
   const [notesOpen, setNotesOpen] = useState('');
   const [closingCash, setClosingCash] = useState('');
   const [notesClose, setNotesClose] = useState('');
+  const [adjustments, setAdjustments] = useState<Array<{ amount: string; notes: string; is_shopping: boolean }>>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // Edit Form state
+  const [editOpeningCash, setEditOpeningCash] = useState('');
+  const [editClosingCash, setEditClosingCash] = useState('');
+  const [editNotesOpen, setEditNotesOpen] = useState('');
+  const [editNotesClose, setEditNotesClose] = useState('');
+  const [editStatus, setEditStatus] = useState<'open' | 'closed'>('open');
+  const [editAdjustments, setEditAdjustments] = useState<Array<{ amount: string; notes: string; is_shopping: boolean }>>([]);
 
   // Filter state
   const getLocalDateString = () => {
@@ -134,6 +155,15 @@ export default function CashierShiftPage() {
 
   // Expanded rows in table
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  // Reset adjustments on close modal toggle
+  useEffect(() => {
+    if (!showCloseDialog) {
+      setClosingCash('');
+      setNotesClose('');
+      setAdjustments([]);
+    }
+  }, [showCloseDialog]);
 
   // ======================== FETCH DATA ========================
 
@@ -281,14 +311,17 @@ export default function CashierShiftPage() {
       return;
     }
 
-    // If there's a significant discrepancy, notes_close should be required
-    if (liveData) {
-      const expected = liveData.expected_cash;
-      const diff = Number(closingCash) - expected;
-      if (Math.abs(diff) > 1000 && !notesClose.trim()) {
-        toast.error('Catatan wajib diisi jika ada selisih uang lebih dari Rp 1.000');
-        return;
-      }
+    // Calculations based on local input + adjustments
+    const totalShoppingAdjustments = adjustments
+      .filter(adj => adj.is_shopping)
+      .reduce((sum, adj) => sum + (Number(adj.amount) || 0), 0);
+
+    const expectedPreview = (liveData?.expected_cash || 0) - totalShoppingAdjustments;
+    const diff = Number(closingCash) - expectedPreview;
+
+    if (Math.abs(diff) > 1000 && !notesClose.trim()) {
+      toast.error('Catatan wajib diisi jika ada selisih uang lebih dari Rp 1.000');
+      return;
     }
 
     setSubmitting(true);
@@ -296,11 +329,17 @@ export default function CashierShiftPage() {
       await api.put(`/cashier-shifts/${activeShift!.id}/close`, {
         closing_cash: Number(closingCash),
         notes_close: notesClose || null,
+        adjustments: adjustments.map(adj => ({
+          amount: Number(adj.amount) || 0,
+          notes: adj.notes,
+          is_shopping: !!adj.is_shopping,
+        })),
       });
       toast.success('Shift berhasil ditutup! Terima kasih atas kerja kerasnya 🎉');
       setShowCloseDialog(false);
       setClosingCash('');
       setNotesClose('');
+      setAdjustments([]);
       await fetchAll();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal menutup shift');
@@ -319,13 +358,93 @@ export default function CashierShiftPage() {
     }
   };
 
-  const toggleRowExpand = (id: number) => {
-    setExpandedRows(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const openEditShift = (shift: CashierShift) => {
+    setEditingShift(shift);
+    setEditOpeningCash(String(shift.opening_cash));
+    setEditClosingCash(shift.closing_cash !== null ? String(shift.closing_cash) : '');
+    setEditNotesOpen(shift.notes_open || '');
+    setEditNotesClose(shift.notes_close || '');
+    setEditStatus(shift.status);
+    setEditAdjustments(
+      shift.adjustments
+        ? shift.adjustments.map(adj => ({
+            amount: String(adj.amount),
+            notes: adj.notes || '',
+            is_shopping: !!adj.is_shopping,
+          }))
+        : []
+    );
+    setShowEditDialog(true);
+  };
+
+  const handleEditShift = async () => {
+    if (!editingShift) return;
+
+    if (!editOpeningCash || Number(editOpeningCash) < 0) {
+      toast.error('Masukkan jumlah modal awal yang valid');
+      return;
+    }
+
+    if (editStatus === 'closed' && (!editClosingCash || Number(editClosingCash) < 0)) {
+      toast.error('Masukkan jumlah uang fisik di laci kasir jika shift ditutup');
+      return;
+    }
+
+    const payload: any = {
+      opening_cash: Number(editOpeningCash),
+      notes_open: editNotesOpen || null,
+      status: editStatus,
+      adjustments: editAdjustments.map(adj => ({
+        amount: Number(adj.amount) || 0,
+        notes: adj.notes,
+        is_shopping: !!adj.is_shopping,
+      })),
+    };
+
+    if (editStatus === 'closed') {
+      payload.closing_cash = Number(editClosingCash);
+      payload.notes_close = editNotesClose || null;
+    }
+
+    setSubmitting(true);
+    try {
+      await api.put(`/cashier-shifts/${editingShift.id}`, payload);
+      toast.success('Shift berhasil diperbarui!');
+      setShowEditDialog(false);
+      await fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal memperbarui shift');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteShift = async (shiftId: number) => {
+    if (!confirm('Apakah Anda yakin ingin menghapus shift ini? Semua data terkait (termasuk belanja harian yang diinput otomatis dari shift ini) juga akan dihapus secara permanen.')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/cashier-shifts/${shiftId}`);
+      toast.success('Shift berhasil dihapus!');
+      await fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal menghapus shift');
+    }
+  };
+
+  // ======================== ADJUSTMENTS LOGIC ========================
+
+  const addAdjustment = () => {
+    setAdjustments([...adjustments, { amount: '', notes: '', is_shopping: false }]);
+  };
+
+  const removeAdjustment = (index: number) => {
+    setAdjustments(adjustments.filter((_, i) => i !== index));
+  };
+
+  const updateAdjustment = (index: number, key: string, value: any) => {
+    setAdjustments(adjustments.map((item, i) => i === index ? { ...item, [key]: value } : item));
   };
 
   // ======================== HELPERS ========================
@@ -376,6 +495,15 @@ export default function CashierShiftPage() {
     return <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800">Kurang {formatCurrency(discrepancy)}</Badge>;
   };
 
+  const toggleRowExpand = (id: number) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // ======================== PERMISSION CHECK ========================
 
   if (authLoading) {
@@ -401,6 +529,15 @@ export default function CashierShiftPage() {
       </MainLayout>
     );
   }
+
+  // Pre-calculated expectations for current closing form
+  const totalShoppingAdjustments = adjustments
+    .filter(adj => adj.is_shopping)
+    .reduce((sum, adj) => sum + (Number(adj.amount) || 0), 0);
+  const expectedCashPreview = (liveData?.expected_cash || 0) - totalShoppingAdjustments;
+  const currentDiscrepancy = closingCash ? Number(closingCash) - expectedCashPreview : null;
+
+  const isOwnerOrAdmin = isAdmin() || user?.role === 'owner';
 
   // ======================== RENDER ========================
 
@@ -437,7 +574,7 @@ export default function CashierShiftPage() {
                   <div>
                     <h3 className="text-lg font-bold text-green-800 dark:text-green-300">Shift Aktif</h3>
                     <p className="text-sm text-green-700 dark:text-green-400">
-                      Dibuka: {formatDateTime(activeShift.opened_at)} • Durasi: {calculateDuration(activeShift.opened_at)}
+                      Kasir: <strong className="text-primary-foreground font-semibold">{activeShift.user?.name}</strong> • Dibuka: {formatDateTime(activeShift.opened_at)} • Durasi: {calculateDuration(activeShift.opened_at)}
                     </p>
                     <div className="flex flex-wrap gap-4 mt-3">
                       <div>
@@ -459,6 +596,22 @@ export default function CashierShiftPage() {
                             <p className="font-bold text-sm">{formatCurrency(liveData.cash_sales)}</p>
                           </div>
                           <div>
+                            <span className="text-xs text-muted-foreground text-blue-600">QRIS/TF</span>
+                            <p className="font-bold text-sm text-blue-600">{formatCurrency(liveData.qris_sales)}</p>
+                          </div>
+                          <div>
+                            <span className="text-xs text-muted-foreground text-purple-600">Kartu</span>
+                            <p className="font-bold text-sm text-purple-600">{formatCurrency(liveData.card_sales)}</p>
+                          </div>
+                          <div>
+                            <span className="text-xs text-muted-foreground text-amber-600">Paylater</span>
+                            <p className="font-bold text-sm text-amber-600">{formatCurrency(liveData.paylater_sales)}</p>
+                          </div>
+                          <div>
+                            <span className="text-xs text-muted-foreground text-orange-600">Belanja</span>
+                            <p className="font-bold text-sm text-orange-600">-{formatCurrency(liveData.shopping_expenses)}</p>
+                          </div>
+                          <div>
                             <span className="text-xs text-muted-foreground">Expected Cash</span>
                             <p className="font-bold text-sm text-green-700 dark:text-green-300">{formatCurrency(liveData.expected_cash)}</p>
                           </div>
@@ -470,13 +623,20 @@ export default function CashierShiftPage() {
                     )}
                   </div>
                 </div>
-                <Button
-                  onClick={() => setShowCloseDialog(true)}
-                  className="bg-red-600 hover:bg-red-700 text-white flex-shrink-0"
-                >
-                  <StopCircle className="w-4 h-4 mr-2" />
-                  Tutup Shift
-                </Button>
+                <div className="flex gap-2">
+                  {isOwnerOrAdmin && (
+                    <Button variant="outline" size="sm" onClick={() => openEditShift(activeShift)}>
+                      <Edit className="w-4 h-4 mr-2" /> Edit Shift
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() => setShowCloseDialog(true)}
+                    className="bg-red-600 hover:bg-red-700 text-white flex-shrink-0"
+                  >
+                    <StopCircle className="w-4 h-4 mr-2" />
+                    Tutup Shift
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -664,9 +824,8 @@ export default function CashierShiftPage() {
                   </thead>
                   <tbody>
                     {shifts.map((shift) => (
-                      <>
+                      <React.Fragment key={shift.id}>
                         <tr
-                          key={shift.id}
                           className="border-b hover:bg-muted/50 cursor-pointer transition-colors"
                           onClick={() => toggleRowExpand(shift.id)}
                         >
@@ -695,43 +854,88 @@ export default function CashierShiftPage() {
                         </tr>
                         {/* Expanded detail row */}
                         {expandedRows.has(shift.id) && (
-                          <tr key={`detail-${shift.id}`}>
+                          <tr>
                             <td colSpan={canEdit() ? 10 : 9} className="bg-muted/30 px-4 py-3">
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 text-xs">
                                 <div>
-                                  <span className="text-muted-foreground">Total Transaksi</span>
-                                  <p className="font-bold">{shift.total_transactions ?? '-'}</p>
+                                  <span className="text-muted-foreground block mb-0.5">Total Transaksi</span>
+                                  <p className="font-bold text-sm">{shift.total_transactions ?? '-'}</p>
                                 </div>
                                 <div>
-                                  <span className="text-muted-foreground">Penjualan Cash</span>
-                                  <p className="font-bold">{shift.cash_sales !== null ? formatCurrency(shift.cash_sales) : '-'}</p>
+                                  <span className="text-muted-foreground block mb-0.5">Penjualan Cash</span>
+                                  <p className="font-bold text-sm">{shift.cash_sales !== null ? formatCurrency(shift.cash_sales) : '-'}</p>
                                 </div>
                                 <div>
-                                  <span className="text-muted-foreground">Total Kembalian</span>
-                                  <p className="font-bold">{shift.cash_change !== null ? formatCurrency(shift.cash_change) : '-'}</p>
+                                  <span className="text-muted-foreground block mb-0.5 font-medium text-red-500">Kembalian</span>
+                                  <p className="font-bold text-sm text-red-500">{shift.cash_change !== null ? formatCurrency(shift.cash_change) : '-'}</p>
                                 </div>
                                 <div>
-                                  <span className="text-muted-foreground">Selisih Nominal</span>
-                                  <p className={`font-bold ${getDiscrepancyColor(shift.discrepancy)}`}>
-                                    {shift.discrepancy !== null ? formatCurrency(shift.discrepancy) : '-'}
-                                  </p>
+                                  <span className="text-muted-foreground block mb-0.5 text-blue-600">QRIS/TF</span>
+                                  <p className="font-bold text-sm text-blue-600">{shift.qris_sales !== null ? formatCurrency(shift.qris_sales) : '-'}</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block mb-0.5 text-purple-600">Kartu</span>
+                                  <p className="font-bold text-sm text-purple-600">{shift.card_sales !== null ? formatCurrency(shift.card_sales) : '-'}</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block mb-0.5 text-amber-600">Paylater</span>
+                                  <p className="font-bold text-sm text-amber-600">{shift.paylater_sales !== null ? formatCurrency(shift.paylater_sales) : '-'}</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block mb-0.5 text-orange-600">Belanja</span>
+                                  <p className="font-bold text-sm text-orange-600">-{shift.shopping_expenses !== null ? formatCurrency(shift.shopping_expenses) : '-'}</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground block mb-0.5">Expected Cash</span>
+                                  <p className="font-bold text-sm">{shift.expected_cash !== null ? formatCurrency(shift.expected_cash) : '-'}</p>
                                 </div>
                               </div>
+
+                              {shift.adjustments && shift.adjustments.length > 0 && (
+                                <div className="mt-3 border-t pt-3 max-w-md">
+                                  <span className="text-muted-foreground text-xs font-semibold block mb-1">Daftar Penyesuaian/Keterangan Selisih:</span>
+                                  <div className="space-y-1">
+                                    {shift.adjustments.map((adj, idx) => (
+                                      <div key={idx} className="flex justify-between items-center text-xs bg-muted/65 p-1.5 rounded">
+                                        <span className="flex items-center gap-1.5">
+                                          {adj.notes || 'Penyesuaian'}
+                                          {adj.is_shopping && (
+                                            <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400 scale-90 border-0 h-4">Belanja</Badge>
+                                          )}
+                                        </span>
+                                        <span className="font-mono font-semibold">{formatCurrency(adj.amount)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
                               {(shift.notes_open || shift.notes_close) && (
                                 <div className="mt-3 space-y-1 text-xs">
                                   {shift.notes_open && <p className="text-muted-foreground">📝 Buka: <span className="italic">{shift.notes_open}</span></p>}
                                   {shift.notes_close && <p className="text-muted-foreground">📝 Tutup: <span className="italic">{shift.notes_close}</span></p>}
                                 </div>
                               )}
-                              <div className="mt-3">
+
+                              <div className="mt-3 flex gap-2">
                                 <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); viewShiftDetail(shift); }}>
                                   Lihat Detail Lengkap
                                 </Button>
+                                {isOwnerOrAdmin && (
+                                  <>
+                                    <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); openEditShift(shift); }}>
+                                      <Edit className="w-3.5 h-3.5 mr-1" /> Edit
+                                    </Button>
+                                    <Button size="sm" variant="destructive" onClick={(e) => { e.stopPropagation(); handleDeleteShift(shift.id); }}>
+                                      <Trash2 className="w-3.5 h-3.5 mr-1" /> Hapus
+                                    </Button>
+                                  </>
+                                )}
                               </div>
                             </td>
                           </tr>
                         )}
-                      </>
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -801,7 +1005,7 @@ export default function CashierShiftPage() {
 
         {/* ===== DIALOG: TUTUP SHIFT ===== */}
         <Dialog open={showCloseDialog} onOpenChange={setShowCloseDialog}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-display flex items-center gap-2">
                 <StopCircle className="w-5 h-5 text-red-600" />
@@ -825,9 +1029,8 @@ export default function CashierShiftPage() {
                       <span className="text-muted-foreground">Total Transaksi</span>
                       <span className="font-medium">{liveData.total_transactions}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Total Omzet</span>
-                      <span className="font-bold">{formatCurrency(liveData.total_revenue)}</span>
+                    <div className="flex justify-between col-span-2 border-b pb-1 font-semibold">
+                      <span>Metode Pembayaran</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Penjualan Cash</span>
@@ -838,14 +1041,40 @@ export default function CashierShiftPage() {
                       <span className="font-medium text-red-600 dark:text-red-400">-{formatCurrency(liveData.cash_change)}</span>
                     </div>
                     <div className="flex justify-between">
+                      <span className="text-muted-foreground text-blue-600">QRIS / TF</span>
+                      <span className="font-medium text-blue-600">{formatCurrency(liveData.qris_sales)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground text-purple-600">Kartu</span>
+                      <span className="font-medium text-purple-600">{formatCurrency(liveData.card_sales)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground text-amber-600 font-medium">Paylater</span>
+                      <span className="font-medium text-amber-600">{formatCurrency(liveData.paylater_sales)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground text-orange-600 font-medium">Belanja (Sistem)</span>
+                      <span className="font-medium text-orange-600">-{formatCurrency(liveData.shopping_expenses)}</span>
+                    </div>
+                    {totalShoppingAdjustments > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-orange-600 font-bold">Belanja Baru (Form)</span>
+                        <span className="font-bold text-orange-600">-{formatCurrency(totalShoppingAdjustments)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between col-span-2 border-t pt-1">
                       <span className="text-muted-foreground">Modal Awal</span>
                       <span className="font-medium">{formatCurrency(activeShift.opening_cash)}</span>
+                    </div>
+                    <div className="flex justify-between col-span-2">
+                      <span className="text-muted-foreground">Total Penjualan (Omzet)</span>
+                      <span className="font-bold text-primary">{formatCurrency(liveData.total_revenue)}</span>
                     </div>
                   </div>
                   <div className="border-t pt-3 flex justify-between items-center">
                     <span className="font-semibold text-sm">Expected Cash di Laci</span>
                     <span className="font-bold text-lg text-green-600 dark:text-green-400">
-                      {formatCurrency(liveData.expected_cash)}
+                      {formatCurrency(expectedCashPreview)}
                     </span>
                   </div>
                 </div>
@@ -872,36 +1101,95 @@ export default function CashierShiftPage() {
               </div>
 
               {/* Discrepancy preview */}
-              {closingCash && liveData && (
+              {closingCash && liveData && currentDiscrepancy !== null && (
                 <div className={`rounded-lg border p-3 ${
-                  Number(closingCash) - liveData.expected_cash === 0
+                  currentDiscrepancy === 0
                     ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
-                    : Number(closingCash) - liveData.expected_cash > 0
+                    : currentDiscrepancy > 0
                     ? 'border-yellow-500/50 bg-yellow-50/50 dark:bg-yellow-950/20'
                     : 'border-red-500/50 bg-red-50/50 dark:bg-red-950/20'
                 }`}>
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-sm flex items-center gap-2">
-                      {Number(closingCash) - liveData.expected_cash === 0 ? (
+                      {currentDiscrepancy === 0 ? (
                         <><CheckCircle2 className="w-4 h-4 text-green-600" /> Kas Cocok!</>
-                      ) : Number(closingCash) - liveData.expected_cash > 0 ? (
+                      ) : currentDiscrepancy > 0 ? (
                         <><TrendingUp className="w-4 h-4 text-yellow-600" /> Kas Lebih</>
                       ) : (
                         <><TrendingDown className="w-4 h-4 text-red-600" /> Kas Kurang</>
                       )}
                     </span>
-                    <span className={`font-bold text-lg ${getDiscrepancyColor(Number(closingCash) - liveData.expected_cash)}`}>
-                      {formatCurrency(Number(closingCash) - liveData.expected_cash)}
+                    <span className={`font-bold text-lg ${getDiscrepancyColor(currentDiscrepancy)}`}>
+                      {formatCurrency(currentDiscrepancy)}
                     </span>
                   </div>
                 </div>
               )}
 
+              {/* Adjustments Section */}
+              <div className="border-t pt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <Label className="text-sm font-bold">Penyesuaian / Keterangan Selisih</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addAdjustment}
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Tambah
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Gunakan untuk paylater atau belanja. Centang "Belanja" jika diambil dari laci cash agar mengurangi expected cash.
+                </p>
+                <div className="space-y-3 max-h-[180px] overflow-y-auto pr-1">
+                  {adjustments.map((adj, idx) => (
+                    <div key={idx} className="flex gap-2 items-center bg-muted/40 p-2 rounded border">
+                      <div className="w-[110px]">
+                        <Input
+                          type="number"
+                          placeholder="Nominal"
+                          value={adj.amount}
+                          onChange={(e) => updateAdjustment(idx, 'amount', e.target.value)}
+                          className="h-8 text-xs font-mono"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          placeholder="Contoh: Paylater Meja 5"
+                          value={adj.notes}
+                          onChange={(e) => updateAdjustment(idx, 'notes', e.target.value)}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          id={`shopping-${idx}`}
+                          checked={adj.is_shopping}
+                          onChange={(e) => updateAdjustment(idx, 'is_shopping', e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-primary"
+                        />
+                        <Label htmlFor={`shopping-${idx}`} className="text-xs select-none">Belanja</Label>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                        onClick={() => removeAdjustment(idx)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Notes */}
               <div>
                 <Label className="text-sm font-medium">
                   Catatan Tutup Shift
-                  {closingCash && liveData && Math.abs(Number(closingCash) - liveData.expected_cash) > 1000 && (
+                  {closingCash && liveData && currentDiscrepancy !== null && Math.abs(currentDiscrepancy) > 1000 && (
                     <span className="text-red-500 ml-1">* (Wajib karena ada selisih)</span>
                   )}
                 </Label>
@@ -934,11 +1222,164 @@ export default function CashierShiftPage() {
           </DialogContent>
         </Dialog>
 
+        {/* ===== DIALOG: EDIT SHIFT ===== */}
+        <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="font-display flex items-center gap-2">
+                <Edit className="w-5 h-5 text-primary" />
+                Edit Shift Kasir
+              </DialogTitle>
+            </DialogHeader>
+            {editingShift && (
+              <div className="space-y-4 pt-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium">Status Shift</Label>
+                    <Select value={editStatus} onValueChange={(v: 'open' | 'closed') => setEditStatus(v)}>
+                      <SelectTrigger className="mt-1.5">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="open">Aktif / Buka</SelectItem>
+                        <SelectItem value="closed">Selesai / Tutup</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Modal Awal (Rp)</Label>
+                    <Input
+                      type="number"
+                      value={editOpeningCash}
+                      onChange={(e) => setEditOpeningCash(e.target.value)}
+                      className="mt-1.5 font-mono"
+                    />
+                  </div>
+                </div>
+
+                {editStatus === 'closed' && (
+                  <div>
+                    <Label className="text-sm font-medium">Uang Aktual di Laci (Rp)</Label>
+                    <Input
+                      type="number"
+                      value={editClosingCash}
+                      onChange={(e) => setEditClosingCash(e.target.value)}
+                      className="mt-1.5 font-mono"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <Label className="text-sm font-medium">Catatan Buka Shift</Label>
+                  <Textarea
+                    value={editNotesOpen}
+                    onChange={(e) => setEditNotesOpen(e.target.value)}
+                    className="mt-1.5"
+                    rows={2}
+                  />
+                </div>
+
+                {editStatus === 'closed' && (
+                  <div>
+                    <Label className="text-sm font-medium">Catatan Tutup Shift</Label>
+                    <Textarea
+                      value={editNotesClose}
+                      onChange={(e) => setEditNotesClose(e.target.value)}
+                      className="mt-1.5"
+                      rows={2}
+                    />
+                  </div>
+                )}
+
+                {/* Adjustments Section in Edit */}
+                <div className="border-t pt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <Label className="text-sm font-bold">Penyesuaian / Keterangan Selisih</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditAdjustments([...editAdjustments, { amount: '', notes: '', is_shopping: false }])}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Tambah
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Gunakan untuk paylater atau belanja. Centang "Belanja" jika diambil dari laci cash agar mengurangi expected cash.
+                  </p>
+                  <div className="space-y-3 max-h-[180px] overflow-y-auto pr-1">
+                    {editAdjustments.map((adj, idx) => (
+                      <div key={idx} className="flex gap-2 items-center bg-muted/30 p-2 rounded border">
+                        <div className="w-[110px]">
+                          <Input
+                            type="number"
+                            placeholder="Nominal"
+                            value={adj.amount}
+                            onChange={(e) => {
+                              const updated = [...editAdjustments];
+                              updated[idx].amount = e.target.value;
+                              setEditAdjustments(updated);
+                            }}
+                            className="h-8 text-xs font-mono"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <Input
+                            placeholder="Contoh: Paylater Customer"
+                            value={adj.notes}
+                            onChange={(e) => {
+                              const updated = [...editAdjustments];
+                              updated[idx].notes = e.target.value;
+                              setEditAdjustments(updated);
+                            }}
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            id={`edit-shopping-${idx}`}
+                            checked={adj.is_shopping}
+                            onChange={(e) => {
+                              const updated = [...editAdjustments];
+                              updated[idx].is_shopping = e.target.checked;
+                              setEditAdjustments(updated);
+                            }}
+                            className="h-4 w-4 rounded border-gray-300 text-primary"
+                          />
+                          <Label htmlFor={`edit-shopping-${idx}`} className="text-xs select-none">Belanja</Label>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                          onClick={() => setEditAdjustments(editAdjustments.filter((_, i) => i !== idx))}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setShowEditDialog(false)} disabled={submitting}>
+                    Batal
+                  </Button>
+                  <Button className="flex-1 animate-pulse bg-primary text-primary-foreground hover:bg-primary/90" onClick={handleEditShift} disabled={submitting}>
+                    {submitting ? 'Menyimpan...' : 'Simpan Perubahan'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         {/* ===== DIALOG: DETAIL SHIFT ===== */}
         <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle className="font-display">Detail Shift</DialogTitle>
+              <DialogTitle className="font-display">Detail Shift Kasir</DialogTitle>
             </DialogHeader>
             {detailShift && (
               <div className="space-y-4 pt-2">
@@ -983,38 +1424,77 @@ export default function CashierShiftPage() {
                   <div className="grid grid-cols-2 gap-x-4 p-3 text-sm">
                     <div>
                       <span className="text-muted-foreground text-xs">Modal Awal</span>
-                      <p className="font-bold">{formatCurrency(detailShift.opening_cash)}</p>
+                      <p className="font-bold text-sm">{formatCurrency(detailShift.opening_cash)}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground text-xs">Total Omzet</span>
-                      <p className="font-bold">{detailShift.total_revenue !== null ? formatCurrency(detailShift.total_revenue) : '-'}</p>
+                      <p className="font-bold text-sm text-primary">{detailShift.total_revenue !== null ? formatCurrency(detailShift.total_revenue) : '-'}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 p-3 text-sm">
                     <div>
                       <span className="text-muted-foreground text-xs">Penjualan Cash</span>
-                      <p className="font-medium">{detailShift.cash_sales !== null ? formatCurrency(detailShift.cash_sales) : '-'}</p>
+                      <p className="font-medium text-sm">{detailShift.cash_sales !== null ? formatCurrency(detailShift.cash_sales) : '-'}</p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground text-xs">Kembalian Cash</span>
-                      <p className="font-medium">{detailShift.cash_change !== null ? formatCurrency(detailShift.cash_change) : '-'}</p>
+                      <span className="text-muted-foreground text-xs text-red-500">Kembalian Cash</span>
+                      <p className="font-medium text-sm text-red-500">{detailShift.cash_change !== null ? `-${formatCurrency(detailShift.cash_change)}` : '-'}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 p-3 text-sm">
+                    <div>
+                      <span className="text-muted-foreground text-xs text-blue-600 font-medium">Penjualan QRIS / TF</span>
+                      <p className="font-medium text-sm text-blue-600">{detailShift.qris_sales !== null ? formatCurrency(detailShift.qris_sales) : '-'}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs text-purple-600 font-medium">Penjualan Kartu</span>
+                      <p className="font-medium text-sm text-purple-600">{detailShift.card_sales !== null ? formatCurrency(detailShift.card_sales) : '-'}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 p-3 text-sm">
+                    <div>
+                      <span className="text-muted-foreground text-xs text-amber-600 font-medium">Paylater / Pending</span>
+                      <p className="font-medium text-sm text-amber-600">{detailShift.paylater_sales !== null ? formatCurrency(detailShift.paylater_sales) : '-'}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground text-xs text-orange-600 font-medium">Belanja dari Laci</span>
+                      <p className="font-medium text-sm text-orange-600">-{detailShift.shopping_expenses !== null ? formatCurrency(detailShift.shopping_expenses) : '-'}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-x-4 p-3 text-sm bg-muted/30">
                     <div>
-                      <span className="text-muted-foreground text-xs">Expected Cash</span>
-                      <p className="font-bold">{detailShift.expected_cash !== null ? formatCurrency(detailShift.expected_cash) : '-'}</p>
+                      <span className="text-muted-foreground text-xs font-semibold">Expected Cash</span>
+                      <p className="font-bold text-sm text-green-700 dark:text-green-400">{detailShift.expected_cash !== null ? formatCurrency(detailShift.expected_cash) : '-'}</p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground text-xs">Cash Aktual</span>
-                      <p className="font-bold">{detailShift.closing_cash !== null ? formatCurrency(detailShift.closing_cash) : '-'}</p>
+                      <span className="text-muted-foreground text-xs font-semibold">Cash Aktual</span>
+                      <p className="font-bold text-sm">{detailShift.closing_cash !== null ? formatCurrency(detailShift.closing_cash) : '-'}</p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground text-xs">Selisih</span>
+                      <span className="text-muted-foreground text-xs font-semibold">Selisih</span>
                       <div className="mt-0.5">{getDiscrepancyBadge(detailShift.discrepancy)}</div>
                     </div>
                   </div>
                 </div>
+
+                {detailShift.adjustments && detailShift.adjustments.length > 0 && (
+                  <div className="border rounded-lg p-3 space-y-2">
+                    <span className="text-xs text-muted-foreground font-semibold block mb-1">Daftar Penyesuaian/Keterangan Selisih:</span>
+                    <div className="space-y-1">
+                      {detailShift.adjustments.map((adj, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-muted/50 p-2 rounded">
+                          <span className="flex items-center gap-1.5">
+                            {adj.notes || 'Penyesuaian'}
+                            {adj.is_shopping && (
+                              <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400 scale-90 border-0 h-4">Belanja</Badge>
+                            )}
+                          </span>
+                          <span className="font-mono font-semibold">{formatCurrency(adj.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {(detailShift.notes_open || detailShift.notes_close) && (
                   <div className="border rounded-lg p-3 space-y-2 text-sm">
@@ -1030,6 +1510,17 @@ export default function CashierShiftPage() {
                         <p className="italic text-muted-foreground">{detailShift.notes_close}</p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {isOwnerOrAdmin && (
+                  <div className="flex gap-2 pt-2 border-t justify-end">
+                    <Button variant="outline" size="sm" onClick={() => { setShowDetailDialog(false); openEditShift(detailShift); }}>
+                      <Edit className="w-3.5 h-3.5 mr-1" /> Edit Shift
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => { setShowDetailDialog(false); handleDeleteShift(detailShift.id); }}>
+                      <Trash2 className="w-3.5 h-3.5 mr-1" /> Hapus Shift
+                    </Button>
                   </div>
                 )}
               </div>

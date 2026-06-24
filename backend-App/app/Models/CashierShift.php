@@ -21,11 +21,14 @@ class CashierShift extends Model
         'expected_cash',
         'cash_sales',
         'cash_change',
+        'qris_sales',
+        'card_sales',
         'discrepancy',
         'total_transactions',
         'total_revenue',
         'notes_open',
         'notes_close',
+        'adjustments',
         'status',
     ];
 
@@ -37,8 +40,11 @@ class CashierShift extends Model
         'expected_cash' => 'decimal:2',
         'cash_sales' => 'decimal:2',
         'cash_change' => 'decimal:2',
+        'qris_sales' => 'decimal:2',
+        'card_sales' => 'decimal:2',
         'discrepancy' => 'decimal:2',
         'total_revenue' => 'decimal:2',
+        'adjustments' => 'array',
     ];
 
     /**
@@ -47,6 +53,14 @@ class CashierShift extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the daily shopping records associated with this shift
+     */
+    public function dailyShoppings(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(DailyShopping::class);
     }
 
     /**
@@ -97,14 +111,42 @@ class CashierShift extends Model
         // Cash change: kembalian dari pembayaran cash
         $cashChange = $cashOrders->sum('change_amount');
 
-        // Expected cash = opening + cash received - change given
-        $expectedCash = $this->opening_cash + $cashSales - $cashChange;
+        // QRIS sales
+        $qrisSales = $orders->where('payment_method', 'qris')->sum('total');
+        $splitQrisSales = $orders->where('second_payment_method', 'qris')->sum('second_paid_amount');
+        $qrisSales += $splitQrisSales;
+
+        // Card sales
+        $cardSales = $orders->where('payment_method', 'card')->sum('total');
+        $splitCardSales = $orders->where('second_payment_method', 'card')->sum('second_paid_amount');
+        $cardSales += $splitCardSales;
+
+        // Paylater sales (payment_method is null or payment_status is pending)
+        $paylaterSales = $orders->whereNull('payment_method')->sum('total');
+
+        // Daily Shopping (belanja) expenses associated with this shift
+        $shoppingExpenses = DailyShopping::where('cashier_shift_id', $this->id)
+            ->orWhere(function ($query) use ($endTime) {
+                $query->whereNull('cashier_shift_id')
+                    ->where('store_id', $this->store_id)
+                    ->where('user_id', $this->user_id)
+                    ->where('created_at', '>=', $this->opened_at)
+                    ->where('created_at', '<=', $endTime);
+            })
+            ->sum('total_price');
+
+        // Expected cash = opening + cash received - change given - shopping expenses
+        $expectedCash = $this->opening_cash + $cashSales - $cashChange - $shoppingExpenses;
 
         return [
             'total_transactions' => $totalTransactions,
             'total_revenue' => $totalRevenue,
             'cash_sales' => $cashSales,
             'cash_change' => $cashChange,
+            'qris_sales' => $qrisSales,
+            'card_sales' => $cardSales,
+            'paylater_sales' => $paylaterSales,
+            'shopping_expenses' => $shoppingExpenses,
             'expected_cash' => $expectedCash,
         ];
     }

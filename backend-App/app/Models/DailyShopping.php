@@ -24,6 +24,7 @@ class DailyShopping extends Model
         'notes',
         'shopping_date',
         'image_path',
+        'cashier_shift_id',
     ];
 
     protected $casts = [
@@ -41,5 +42,10 @@ class DailyShopping extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function cashierShift()
+    {
+        return $this->belongsTo(CashierShift::class);
     }
 }

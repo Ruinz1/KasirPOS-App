@@ -114,6 +114,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/cashier-shifts/open', [CashierShiftController::class, 'open']);
     Route::put('/cashier-shifts/{id}/close', [CashierShiftController::class, 'close']);
     Route::get('/cashier-shifts/{id}', [CashierShiftController::class, 'show']);
+    Route::put('/cashier-shifts/{id}', [CashierShiftController::class, 'update']);
+    Route::delete('/cashier-shifts/{id}', [CashierShiftController::class, 'destroy']);
 
     // Capital routes
     Route::get('/capital', [CapitalController::class, 'index']);
