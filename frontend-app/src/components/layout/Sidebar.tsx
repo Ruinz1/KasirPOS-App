@@ -27,7 +27,9 @@ import {
   Table,
   ChefHat,
   GlassWater,
-  Clock
+  Clock,
+  Star,
+  Gift
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -42,6 +44,8 @@ const allMenuItems = [
   { icon: GlassWater, label: 'Antrian Minuman', path: '/queue/drink', permission: 'manage_orders' },
   { icon: History, label: 'Riwayat Pesanan', path: '/order-history', permission: 'manage_orders' },
   { icon: Clock, label: 'Shift Kasir', path: '/cashier-shifts', permission: 'manage_orders' },
+  { icon: Star, label: 'Member', path: '/members', permission: 'manage_orders' },
+  { icon: Gift, label: 'Reward Poin', path: '/point-rewards', permission: 'manage_orders' },
   { icon: Package, label: 'Inventori', path: '/inventory', permission: 'view_inventory' },
   { icon: ShoppingBag, label: 'Belanja Harian', path: '/daily-shopping', permission: 'view_inventory' },
   { icon: Coffee, label: 'Menu', path: '/menu', permission: 'view_menu' },
@@ -110,6 +114,11 @@ export function Sidebar() {
     // Special handling for Leaves (All users)
     if (item.path === '/leaves') {
       return true;
+    }
+
+    // Member & Reward Poin visible to admin, owner, and karyawan with manage_orders
+    if (item.path === '/members' || item.path === '/point-rewards') {
+      return user.role === 'admin' || hasPermission('manage_orders');
     }
 
     return hasPermission(item.permission);
