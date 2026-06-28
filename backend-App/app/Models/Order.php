@@ -16,6 +16,9 @@ class Order extends Model
         'user_id',
         'customer_name',
         'customer_notes',
+        'member_id',
+        'points_earned',
+        'points_redeemed',
         'total',
         'cogs',
         'profit',
@@ -72,6 +75,14 @@ class Order extends Model
     public function table(): BelongsTo
     {
         return $this->belongsTo(Table::class);
+    }
+
+    /**
+     * Get the member associated with this order
+     */
+    public function member(): BelongsTo
+    {
+        return $this->belongsTo(Member::class);
     }
 
     /**

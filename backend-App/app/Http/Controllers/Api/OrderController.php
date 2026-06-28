@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\MenuItem;
+use App\Models\Member;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -59,6 +60,8 @@ class OrderController extends Controller
     {
         $validated = $request->validate([
             'customer_name' => 'nullable|string|max:255',
+            'member_id' => 'nullable|exists:members,id',
+            'points_redeemed' => 'nullable|integer|min:0',
             'payment_method' => 'nullable|in:cash,card,qris',
             'payment_status' => 'nullable|in:paid,pending',
             'order_type' => 'required|in:dine_in,takeaway',
@@ -100,9 +103,21 @@ class OrderController extends Controller
                 ->whereDate('created_at', $today)
                 ->count() + 1;
 
+            // Validate & redeem points before creating order
+            $member = null;
+            $pointsRedeemed = (int)($validated['points_redeemed'] ?? 0);
+            if (!empty($validated['member_id'])) {
+                $member = Member::findOrFail($validated['member_id']);
+                if ($pointsRedeemed > 0 && $member->total_points < $pointsRedeemed) {
+                    throw new \Exception("Poin tidak cukup. Tersisa: {$member->total_points} poin");
+                }
+            }
+
             $order = Order::create([
                 'user_id' => $request->user()->id,
                 'customer_name' => $validated['customer_name'],
+                'member_id' => $validated['member_id'] ?? null,
+                'points_redeemed' => $pointsRedeemed > 0 ? $pointsRedeemed : null,
                 'payment_method' => $validated['payment_method'],
                 'payment_status' => $validated['payment_status'],
                 'order_type' => $validated['order_type'],
@@ -207,9 +222,27 @@ class OrderController extends Controller
             
             $order->save();
 
+            // Handle member points
+            if ($member) {
+                // Redeem points (deduct)
+                if ($pointsRedeemed > 0) {
+                    $member->redeemPoints($pointsRedeemed, $order->id, "Redeem reward - Order #{$order->daily_number}");
+                }
+
+                // Earn points only on paid orders (Rp 10.000 = 1 poin)
+                if ($order->payment_status === 'paid') {
+                    $pointsEarned = (int)floor($order->total / 10000);
+                    if ($pointsEarned > 0) {
+                        $member->addPoints($pointsEarned, $order->id, "Belanja Rp " . number_format($order->total, 0, ',', '.') . " - Order #{$order->daily_number}");
+                        $order->points_earned = $pointsEarned;
+                        $order->save();
+                    }
+                }
+            }
+
             DB::commit();
 
-            $order->load(['items.menuItem', 'user']);
+            $order->load(['items.menuItem', 'user', 'member']);
             return response()->json($order, 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -306,6 +339,8 @@ class OrderController extends Controller
         }
         
         // Update Status based on Total Paid
+        $wasPending = $order->payment_status === 'pending';
+
         if ($validated['payment_status'] === 'paid') {
             if ($totalPaidAfter >= $totalBill) {
                 $order->payment_status = 'paid';
@@ -321,7 +356,20 @@ class OrderController extends Controller
             $order->save();
         }
 
-        $order->load(['items.menuItem', 'user', 'store']);
+        // Earn points for member when pending order is settled
+        if ($wasPending && $order->payment_status === 'paid' && $order->member_id && !$order->points_earned) {
+            $member = Member::find($order->member_id);
+            if ($member) {
+                $pointsEarned = (int)floor($order->total / 10000);
+                if ($pointsEarned > 0) {
+                    $member->addPoints($pointsEarned, $order->id, "Belanja Rp " . number_format($order->total, 0, ',', '.') . " - Order #{$order->daily_number}");
+                    $order->points_earned = $pointsEarned;
+                    $order->save();
+                }
+            }
+        }
+
+        $order->load(['items.menuItem', 'user', 'store', 'member']);
         return response()->json($order);
     }
 

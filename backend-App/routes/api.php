@@ -17,6 +17,8 @@ use App\Http\Controllers\OrderHistoryController;
 use App\Http\Controllers\DailyShoppingController;
 use App\Http\Controllers\LeaveController;
 use App\Http\Controllers\CashierShiftController;
+use App\Http\Controllers\Api\MemberController;
+use App\Http\Controllers\Api\PointRewardController;
 
 // Public routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -116,6 +118,21 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/cashier-shifts/{id}', [CashierShiftController::class, 'show']);
     Route::put('/cashier-shifts/{id}', [CashierShiftController::class, 'update']);
     Route::delete('/cashier-shifts/{id}', [CashierShiftController::class, 'destroy']);
+
+    // Member (CRM & Loyalty) routes
+    Route::get('/members', [MemberController::class, 'index']);
+    Route::post('/members', [MemberController::class, 'store']);
+    Route::post('/members/find-by-phone', [MemberController::class, 'findByPhone']);
+    Route::get('/members/{member}', [MemberController::class, 'show']);
+    Route::put('/members/{member}', [MemberController::class, 'update']);
+    Route::delete('/members/{member}', [MemberController::class, 'destroy']);
+    Route::get('/members/{member}/transactions', [MemberController::class, 'transactions']);
+
+    // Point Rewards routes
+    Route::get('/point-rewards', [PointRewardController::class, 'index']);
+    Route::post('/point-rewards', [PointRewardController::class, 'store']);
+    Route::put('/point-rewards/{pointReward}', [PointRewardController::class, 'update']);
+    Route::delete('/point-rewards/{pointReward}', [PointRewardController::class, 'destroy']);
 
     // Capital routes
     Route::get('/capital', [CapitalController::class, 'index']);

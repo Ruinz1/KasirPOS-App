@@ -22,6 +22,8 @@ import DailyShoppingPage from "./pages/DailyShoppingPage";
 import LeavePage from "./pages/LeavePage";
 import TablesPage from "./pages/TablesPage";
 import CashierShiftPage from "./pages/CashierShiftPage";
+import MembersPage from "./pages/MembersPage";
+import PointRewardsPage from "./pages/PointRewardsPage";
 import NotFound from "./pages/NotFound";
 import LoginPage from "./pages/LoginPage";
 
@@ -98,6 +100,8 @@ const App = () => (
             <Route path="/roles" element={<ProtectedRoute><RolesPage /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
             <Route path="/stores-management" element={<ProtectedRoute><StoresManagementPage /></ProtectedRoute>} />
+            <Route path="/members" element={<ProtectedRoute><MembersPage /></ProtectedRoute>} />
+            <Route path="/point-rewards" element={<ProtectedRoute><PointRewardsPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

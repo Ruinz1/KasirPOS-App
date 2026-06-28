@@ -33,6 +33,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { formatItemNote } from '@/lib/utils';
+import { MemberSearch } from '@/components/pos/MemberSearch';
+import type { Member, PointReward } from '@/types/member';
 
 
 
@@ -120,6 +122,8 @@ export default function POSPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
   const [customerName, setCustomerName] = useState('');
+  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [selectedReward, setSelectedReward] = useState<PointReward | null>(null);
   const [showPayment, setShowPayment] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
@@ -581,6 +585,8 @@ export default function POSPage() {
   const clearCart = () => {
     setCart([]);
     setCustomerName('');
+    setSelectedMember(null);
+    setSelectedReward(null);
     setOrderType('dine_in');
     setPaidAmount('');
   };
@@ -816,7 +822,9 @@ export default function POSPage() {
         // Create new order
         // Jika Bayar Nanti (pending), payment_method = null supaya tidak tersimpan di DB
         const payload: any = {
-          customer_name: customerName || null,
+          customer_name: selectedMember ? selectedMember.name : (customerName || null),
+          member_id: selectedMember ? selectedMember.id : null,
+          points_redeemed: selectedReward ? selectedReward.points_required : null,
           payment_method: paymentStatus === 'pending' ? null : paymentMethod,
           payment_status: paymentStatus,
           order_type: orderType,
@@ -1862,15 +1870,29 @@ export default function POSPage() {
             </div>
           </div>
 
-          {/* Customer Name */}
-          <div className="p-4 border-b border-border bg-card/50">
-            <Input
-              className="input-coffee bg-background"
-              placeholder="Nama Pembeli (opsional)"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              disabled={isAdmin() && !selectedStoreId}
-            />
+          {/* Customer Name & Member */}
+          <div className="p-4 border-b border-border bg-card/50 space-y-2">
+            {!isAdmin() && (
+              <MemberSearch
+                selectedMember={selectedMember}
+                selectedReward={selectedReward}
+                onMemberSelect={(m) => {
+                  setSelectedMember(m);
+                  if (m) setCustomerName(m.name);
+                  else setCustomerName('');
+                }}
+                onRewardSelect={setSelectedReward}
+              />
+            )}
+            {!selectedMember && (
+              <Input
+                className="input-coffee bg-background"
+                placeholder="Nama Pembeli (opsional)"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                disabled={isAdmin() && !selectedStoreId}
+              />
+            )}
           </div>
 
           {/* Cart Items */}
@@ -2078,6 +2100,12 @@ export default function POSPage() {
                 <span className="font-semibold">Total</span>
                 <span className="text-2xl font-bold">{formatCurrency(cartTotal)}</span>
               </div>
+              {selectedMember && !editingOrderId && !addToOrderId && (
+                <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-0.5">
+                  <p>+<strong>{Math.floor(cartTotal / 10000)}</strong> poin akan didapat dari transaksi ini</p>
+                  {selectedReward && <p className="text-green-700">Redeem: -{selectedReward.points_required} poin untuk <strong>{selectedReward.name}</strong></p>}
+                </div>
+              )}
               {(editingOrderId || addToOrderId) && (
                 <button
                   className="w-full py-2 mb-2 text-sm text-muted-foreground hover:text-destructive transition-colors"
