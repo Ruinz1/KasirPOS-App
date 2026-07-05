@@ -15,12 +15,14 @@ class OrderItem extends Model
         'note',
         'is_takeaway',
         'is_addon',
+        'variant_stock_deduction',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
         'is_takeaway' => 'boolean',
         'is_addon' => 'boolean',
+        'variant_stock_deduction' => 'float',
     ];
 
     /**

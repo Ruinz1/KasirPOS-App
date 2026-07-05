@@ -61,6 +61,7 @@ interface MenuItem {
     name: string;
     price: number;
     status: 'ready' | 'kosong' | 'pending';
+    stock_deduction?: number;
   }>;
   parent_id?: number | null;
   portion_value?: number;
@@ -110,8 +111,8 @@ export default function MenuPage() {
 
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [newIngredient, setNewIngredient] = useState({ inventory_item_id: 0, amount: '' });
-  const [menuVariants, setMenuVariants] = useState<Array<{ name: string; price: number; status: 'ready' | 'kosong' | 'pending' }>>([]);
-  const [newVariant, setNewVariant] = useState({ name: '', price: '', status: 'ready' as 'ready' | 'kosong' | 'pending' });
+  const [menuVariants, setMenuVariants] = useState<Array<{ name: string; price: number; status: 'ready' | 'kosong' | 'pending'; stock_deduction: number }>>([]);
+  const [newVariant, setNewVariant] = useState({ name: '', price: '', status: 'ready' as 'ready' | 'kosong' | 'pending', stock_deduction: '1' });
 
   useEffect(() => {
     if (isAdmin()) {
@@ -266,7 +267,8 @@ export default function MenuPage() {
       })) || [];
 
     setIngredients(formattedIngredients);
-    setMenuVariants(item.variants || []);
+    // Map variants, ensuring stock_deduction field is set (default 1 for legacy data)
+    setMenuVariants((item.variants || []).map(v => ({ ...v, stock_deduction: v.stock_deduction ?? 1 })));
     setEditingItem(item);
     setIsAddDialogOpen(true);
   };
@@ -300,7 +302,7 @@ export default function MenuPage() {
     setIngredients([]);
     setNewIngredient({ inventory_item_id: 0, amount: '' });
     setMenuVariants([]);
-    setNewVariant({ name: '', price: '', status: 'ready' });
+    setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1' });
     setEditingItem(null);
     setIsAddDialogOpen(false);
   };
@@ -641,6 +643,9 @@ export default function MenuPage() {
                       <div className="flex justify-between items-center">
                         <Label>Variasi Menu (Opsional)</Label>
                       </div>
+                      <p className="text-xs text-muted-foreground -mt-1">
+                        Setiap variasi bisa punya harga tambahan dan jumlah potongan stok yang berbeda.
+                      </p>
 
                       {menuVariants.length > 0 && (
                         <div className="space-y-2 mb-4">
@@ -677,9 +682,14 @@ export default function MenuPage() {
                                 </button>
                               </div>
 
-                              <span className="flex-1 font-medium text-sm">
-                                {variant.name} ({variant.price > 0 ? `+${formatCurrency(variant.price)}` : 'Free'})
-                              </span>
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium text-sm block truncate">
+                                  {variant.name} ({variant.price > 0 ? `+${formatCurrency(variant.price)}` : 'Free'})
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  Potong stok: <strong>{variant.stock_deduction ?? 1}</strong> porsi
+                                </span>
+                              </div>
                               <span
                                 className={`text-xs px-2 py-1 rounded cursor-pointer hover:opacity-80 select-none ${variant.status === 'ready' ? 'bg-green-100 text-green-700' :
                                   variant.status === 'kosong' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
@@ -726,7 +736,7 @@ export default function MenuPage() {
                             value={newVariant.status}
                             onValueChange={(v) => setNewVariant({ ...newVariant, status: v as any })}
                           >
-                            <SelectTrigger className="w-[120px] input-coffee">
+                            <SelectTrigger className="w-[110px] input-coffee">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -735,17 +745,30 @@ export default function MenuPage() {
                               <SelectItem value="kosong">Kosong</SelectItem>
                             </SelectContent>
                           </Select>
+                          <div className="flex items-center gap-1 flex-1">
+                            <Input
+                              className="w-20 input-coffee"
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              placeholder="1"
+                              value={newVariant.stock_deduction}
+                              onChange={(e) => setNewVariant({ ...newVariant, stock_deduction: e.target.value })}
+                              title="Potong stok (porsi)"
+                            />
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">porsi dipotong</span>
+                          </div>
                           <Button
                             variant="outline"
-                            className="flex-1"
                             onClick={() => {
                               if (newVariant.name) {
                                 setMenuVariants([...menuVariants, {
                                   name: newVariant.name,
                                   price: parseFloat(newVariant.price) || 0,
-                                  status: newVariant.status
+                                  status: newVariant.status,
+                                  stock_deduction: parseFloat(newVariant.stock_deduction) || 1,
                                 }]);
-                                setNewVariant({ name: '', price: '', status: 'ready' });
+                                setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1' });
                               } else {
                                 toast.error("Nama variasi harus diisi");
                               }

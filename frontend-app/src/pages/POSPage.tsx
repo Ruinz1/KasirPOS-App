@@ -478,7 +478,7 @@ export default function POSPage() {
 
   const addToCart = (item: MenuItem) => {
     const variants = getItemVariants(item);
-    let variantPayload: { variant?: string; variant_price?: number } = {};
+    let variantPayload: { variant?: string; variant_price?: number; variant_stock_deduction?: number } = {};
 
     if (variants.length > 0) {
       // Find default variant (first 'ready' one)
@@ -487,7 +487,8 @@ export default function POSPage() {
       if (defaultVariant) {
         variantPayload = {
           variant: defaultVariant.name,
-          variant_price: defaultVariant.price
+          variant_price: defaultVariant.price,
+          variant_stock_deduction: (defaultVariant as any).stock_deduction ?? 1,
         };
       }
     }
@@ -568,7 +569,8 @@ export default function POSPage() {
         return {
           ...c,
           variant: variantName,
-          variant_price: finalPrice
+          variant_price: finalPrice,
+          variant_stock_deduction: (variantObj as any).stock_deduction ?? 1,
         };
       }
       return c;
@@ -728,7 +730,8 @@ export default function POSPage() {
           quantity: c.quantity,
           note: combinedNote || null,
           is_takeaway: Boolean(c.is_takeaway),
-          additional_price: Number(c.variant_price || 0)
+          additional_price: Number(c.variant_price || 0),
+          variant_stock_deduction: Number((c as any).variant_stock_deduction ?? 1),
         };
       });
     };

@@ -62,9 +62,13 @@ const isDrinkItem = (item: OrderItem) => {
     return DRINK_CATEGORIES.includes(cat);
 };
 
+/** True jika order ini adalah re-activated (sudah pernah selesai lalu ada tambahan) */
+const isOrderReactivated = (order: QueueOrder) =>
+    !!(order.queue_completed_at && order.queue_status !== "completed");
+
 const getDisplayItems = (order: QueueOrder) => {
-    const isReactivated = !!(order.queue_completed_at && order.queue_status !== "completed");
-    return isReactivated
+    const reactivated = isOrderReactivated(order);
+    return reactivated
         ? order.items.filter(i => {
             if (!i.is_addon) return false;
             const cat = (i.menu_item?.category || "").toLowerCase();
@@ -72,6 +76,10 @@ const getDisplayItems = (order: QueueOrder) => {
         })
         : [...order.items].sort((a, b) => a.id - b.id);
 };
+
+/** Item original (bukan addon) untuk keperluan konteks pada tampilan re-order */
+const getOriginalFoodItems = (order: QueueOrder) =>
+    order.items.filter(i => !i.is_addon && isFoodItem(i)).sort((a, b) => a.id - b.id);
 
 const shouldHideOrder = (order: QueueOrder): boolean => {
     const displayItems = getDisplayItems(order);
@@ -332,32 +340,47 @@ const FoodQueuePage = () => {
                                 const displayItems = getDisplayItems(order);
                                 const foodItems = displayItems.filter(isFoodItem);
                                 if (foodItems.length === 0) return null;
-                                const hasAddons = foodItems.some(i => i.is_addon);
+
+                                const isReactivated = isOrderReactivated(order);
+                                const originalFoodItems = getOriginalFoodItems(order);
+                                // Addon sebelum selesai: is_addon = true tapi order belum pernah selesai
+                                const hasNewAddons = !isReactivated && foodItems.some(i => i.is_addon);
                                 const foodCompleted = order.queue_status === "completed";
                                 const isInProgress = order.queue_status === "in_progress";
 
+                                // Border & background based on state
+                                let cardClass = "border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ";
+                                if (foodCompleted) cardClass += "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80";
+                                else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
+                                else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-purple-100 shadow-md";
+                                else if (isInProgress) cardClass += "border-blue-400 bg-blue-50 dark:bg-blue-950/20 shadow-lg shadow-blue-100 scale-[1.01]";
+                                else cardClass += "border-orange-300 bg-white dark:bg-orange-950/10 shadow-sm";
+
+                                let barColor = "h-1.5 w-full ";
+                                if (foodCompleted) barColor += "bg-green-500";
+                                else if (isReactivated) barColor += "bg-red-500";
+                                else if (hasNewAddons) barColor += "bg-purple-500";
+                                else if (isInProgress) barColor += "bg-blue-500";
+                                else barColor += "bg-orange-400";
+
                                 return (
-                                    <Card
-                                        key={order.id}
-                                        className={`border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ${
-                                            foodCompleted
-                                                ? "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80"
-                                                : hasAddons
-                                                    ? "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-purple-100 shadow-md"
-                                                    : isInProgress
-                                                        ? "border-blue-400 bg-blue-50 dark:bg-blue-950/20 shadow-lg shadow-blue-100 scale-[1.01]"
-                                                        : "border-orange-300 bg-white dark:bg-orange-950/10 shadow-sm"
-                                        }`}
-                                    >
-                                        {/* Top color bar */}
-                                        <div className={`h-1.5 w-full ${foodCompleted ? "bg-green-500" : hasAddons ? "bg-purple-500" : isInProgress ? "bg-blue-500" : "bg-orange-400"}`} />
+                                    <Card key={order.id} className={cardClass}>
+                                        <div className={barColor} />
 
                                         <CardContent className="p-4">
-                                            {/* Addon Banner */}
-                                            {hasAddons && !foodCompleted && (
+                                            {/* RE-ORDER Banner */}
+                                            {isReactivated && !foodCompleted && (
+                                                <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs p-2 rounded-lg mb-3 font-bold border border-red-200 dark:border-red-800 flex items-center gap-2 animate-pulse">
+                                                    <span className="text-base">🔄</span>
+                                                    <div>RE-ORDER – TAMBAHAN BARU<div className="font-normal text-[10px] opacity-90">Pesanan sudah selesai, ada item tambahan</div></div>
+                                                </div>
+                                            )}
+
+                                            {/* Normal Addon Banner (belum keluar antrian) */}
+                                            {hasNewAddons && !foodCompleted && (
                                                 <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded-lg mb-3 font-bold border border-purple-200 dark:border-purple-800 flex items-center gap-2 animate-pulse">
                                                     <span className="text-base">🔔</span>
-                                                    <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru</div></div>
+                                                    <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru di pesanan ini</div></div>
                                                 </div>
                                             )}
 
@@ -365,7 +388,7 @@ const FoodQueuePage = () => {
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <span className={`text-5xl font-black leading-none ${foodCompleted ? "text-green-500" : "text-orange-500"}`}>
+                                                        <span className={`text-5xl font-black leading-none ${foodCompleted ? "text-green-500" : isReactivated ? "text-red-500" : "text-orange-500"}`}>
                                                             #{order.daily_number}
                                                         </span>
                                                         <div className="flex flex-col gap-1">
@@ -375,8 +398,13 @@ const FoodQueuePage = () => {
                                                             >
                                                                 {order.order_type === "takeaway" ? "🥡 Bungkus" : "🍽️ Makan Sini"}
                                                             </Badge>
-                                                            {hasAddons && (
-                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50 animate-pulse">
+                                                            {isReactivated && (
+                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-red-400 text-red-600 bg-red-50 animate-pulse">
+                                                                    🔄 RE-ORDER
+                                                                </Badge>
+                                                            )}
+                                                            {hasNewAddons && (
+                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50">
                                                                     + TAMBAHAN
                                                                 </Badge>
                                                             )}
@@ -395,20 +423,59 @@ const FoodQueuePage = () => {
                                             </div>
 
                                             {/* Food Items Box */}
-                                            <div className={`rounded-xl border-2 overflow-hidden mb-3 ${foodCompleted ? "border-green-400" : "border-orange-300"}`}>
-                                                <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${foodCompleted ? "bg-green-500" : "bg-orange-500"}`}>
+                                            <div className={`rounded-xl border-2 overflow-hidden mb-3 ${
+                                                foodCompleted ? "border-green-400"
+                                                : isReactivated ? "border-red-400"
+                                                : "border-orange-300"
+                                            }`}>
+                                                {/* Section Header */}
+                                                <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${
+                                                    foodCompleted ? "bg-green-500"
+                                                    : isReactivated ? "bg-red-500"
+                                                    : "bg-orange-500"
+                                                }`}>
                                                     <Utensils className="h-3.5 w-3.5" />
-                                                    <span>DAFTAR MAKANAN</span>
+                                                    <span>{isReactivated ? "🔄 TAMBAHAN BARU" : "DAFTAR MAKANAN"}</span>
                                                     {foodCompleted && <span className="ml-auto bg-white/25 px-1.5 py-0.5 rounded text-[10px]">✓ Selesai</span>}
                                                 </div>
-                                                <div className="px-3 py-2 space-y-1.5 max-h-40 overflow-y-auto bg-white/60 dark:bg-transparent">
+
+                                                <div className="px-3 py-2 space-y-1.5 max-h-48 overflow-y-auto bg-white/60 dark:bg-transparent">
+                                                    {/* Jika re-activated: tampilkan item original greyed-out sebagai konteks */}
+                                                    {isReactivated && originalFoodItems.length > 0 && (
+                                                        <div className="mb-2 pb-2 border-b border-dashed border-gray-300">
+                                                            <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pesanan Sebelumnya (sudah selesai):</p>
+                                                            {originalFoodItems.map(item => (
+                                                                <div key={item.id} className="text-xs leading-relaxed opacity-40 line-through">
+                                                                    <div className="flex items-baseline gap-1">
+                                                                        <span className="font-black text-gray-500 text-sm">{item.quantity}×</span>
+                                                                        <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Item utama yang perlu dibuat (tambahan baru / normal) */}
+                                                    {isReactivated && (
+                                                        <p className="text-[9px] text-red-600 uppercase font-bold tracking-wider mb-1">↓ Buat Sekarang:</p>
+                                                    )}
                                                     {foodItems.map(item => (
-                                                        <div key={item.id} className={`text-xs leading-relaxed ${item.is_addon ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-lg px-2 py-1" : ""}`}>
+                                                        <div key={item.id} className={`text-xs leading-relaxed ${
+                                                            isReactivated
+                                                                ? "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-2 py-1.5"
+                                                                : item.is_addon
+                                                                    ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-lg px-2 py-1"
+                                                                    : ""
+                                                        }`}>
                                                             <div className="flex items-baseline gap-1">
-                                                                <span className="font-black text-orange-600 text-sm">{item.quantity}×</span>
+                                                                <span className={`font-black text-sm ${
+                                                                    isReactivated ? "text-red-600" : "text-orange-600"
+                                                                }`}>{item.quantity}×</span>
                                                                 <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
                                                                 {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
-                                                                {item.is_addon && <span className="text-purple-600 text-[10px] font-bold animate-pulse ml-1">● BARU</span>}
+                                                                {!isReactivated && item.is_addon && (
+                                                                    <span className="text-purple-600 text-[10px] font-bold ml-1">● BARU</span>
+                                                                )}
                                                             </div>
                                                             {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {formatItemNote(item.note, item.menu_item?.name)}</p>}
                                                         </div>
@@ -421,8 +488,8 @@ const FoodQueuePage = () => {
                                                             <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
                                                         </Button>
                                                     ) : (
-                                                        <Button size="sm" className="w-full h-8 text-xs bg-orange-500 hover:bg-orange-600 text-white shadow-sm" onClick={() => handleFoodStatusChange(order.id, true)}>
-                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Makanan Selesai
+                                                        <Button size="sm" className={`w-full h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-orange-500 hover:bg-orange-600"}`} onClick={() => handleFoodStatusChange(order.id, true)}>
+                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Makanan Selesai"}
                                                         </Button>
                                                     )}
                                                 </div>

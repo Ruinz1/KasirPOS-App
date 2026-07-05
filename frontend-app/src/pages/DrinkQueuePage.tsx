@@ -52,9 +52,13 @@ const DRINK_CATEGORIES = ["minuman", "drink", "beverage", "drinks"];
 const isFoodItem = (item: OrderItem) => !DRINK_CATEGORIES.includes((item.menu_item?.category || "").toLowerCase());
 const isDrinkItem = (item: OrderItem) => DRINK_CATEGORIES.includes((item.menu_item?.category || "").toLowerCase());
 
+/** True jika order ini adalah re-activated (sudah pernah selesai lalu ada tambahan) */
+const isOrderReactivated = (order: QueueOrder) =>
+    !!(order.queue_completed_at && order.queue_status !== "completed");
+
 const getDisplayItems = (order: QueueOrder) => {
-    const isReactivated = !!(order.queue_completed_at && order.queue_status !== "completed");
-    return isReactivated
+    const reactivated = isOrderReactivated(order);
+    return reactivated
         ? order.items.filter(i => {
             if (!i.is_addon) return false;
             const cat = (i.menu_item?.category || "").toLowerCase();
@@ -62,6 +66,10 @@ const getDisplayItems = (order: QueueOrder) => {
         })
         : [...order.items].sort((a, b) => a.id - b.id);
 };
+
+/** Item minuman original (bukan addon) untuk konteks re-order */
+const getOriginalDrinkItems = (order: QueueOrder) =>
+    order.items.filter(i => !i.is_addon && isDrinkItem(i)).sort((a, b) => a.id - b.id);
 
 const shouldHideOrder = (order: QueueOrder): boolean => {
     const displayItems = getDisplayItems(order);
@@ -286,29 +294,42 @@ const DrinkQueuePage = () => {
                                 const displayItems = getDisplayItems(order);
                                 const drinkItems = displayItems.filter(isDrinkItem);
                                 if (drinkItems.length === 0) return null;
-                                const hasAddons = drinkItems.some(i => i.is_addon);
+
+                                const isReactivated = isOrderReactivated(order);
+                                const originalDrinkItems = getOriginalDrinkItems(order);
+                                const hasNewAddons = !isReactivated && drinkItems.some(i => i.is_addon);
                                 const drinkCompleted = order.drink_queue_status === "completed";
 
+                                let cardClass = "border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ";
+                                if (drinkCompleted) cardClass += "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80";
+                                else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
+                                else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md";
+                                else cardClass += "border-blue-300 bg-white dark:bg-blue-950/10 shadow-sm";
+
+                                let barColor = "h-1.5 w-full ";
+                                if (drinkCompleted) barColor += "bg-green-500";
+                                else if (isReactivated) barColor += "bg-red-500";
+                                else if (hasNewAddons) barColor += "bg-purple-500";
+                                else barColor += "bg-blue-400";
+
                                 return (
-                                    <Card
-                                        key={order.id}
-                                        className={`border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ${
-                                            drinkCompleted
-                                                ? "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80"
-                                                : hasAddons
-                                                    ? "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md"
-                                                    : "border-blue-300 bg-white dark:bg-blue-950/10 shadow-sm"
-                                        }`}
-                                    >
-                                        {/* Top color bar */}
-                                        <div className={`h-1.5 w-full ${drinkCompleted ? "bg-green-500" : hasAddons ? "bg-purple-500" : "bg-blue-400"}`} />
+                                    <Card key={order.id} className={cardClass}>
+                                        <div className={barColor} />
 
                                         <CardContent className="p-4">
-                                            {/* Addon Banner */}
-                                            {hasAddons && !drinkCompleted && (
+                                            {/* RE-ORDER Banner */}
+                                            {isReactivated && !drinkCompleted && (
+                                                <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs p-2 rounded-lg mb-3 font-bold border border-red-200 dark:border-red-800 flex items-center gap-2 animate-pulse">
+                                                    <span className="text-base">🔄</span>
+                                                    <div>RE-ORDER – TAMBAHAN BARU<div className="font-normal text-[10px] opacity-90">Pesanan sudah selesai, ada minuman tambahan</div></div>
+                                                </div>
+                                            )}
+
+                                            {/* Normal Addon Banner */}
+                                            {hasNewAddons && !drinkCompleted && (
                                                 <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded-lg mb-3 font-bold border border-purple-200 flex items-center gap-2 animate-pulse">
                                                     <span className="text-base">🔔</span>
-                                                    <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru</div></div>
+                                                    <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru di pesanan ini</div></div>
                                                 </div>
                                             )}
 
@@ -316,7 +337,7 @@ const DrinkQueuePage = () => {
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <span className={`text-5xl font-black leading-none ${drinkCompleted ? "text-green-500" : "text-blue-500"}`}>
+                                                        <span className={`text-5xl font-black leading-none ${drinkCompleted ? "text-green-500" : isReactivated ? "text-red-500" : "text-blue-500"}`}>
                                                             #{order.daily_number}
                                                         </span>
                                                         <div className="flex flex-col gap-1">
@@ -326,8 +347,13 @@ const DrinkQueuePage = () => {
                                                             >
                                                                 {order.order_type === "takeaway" ? "🥡 Bungkus" : "🍽️ Makan Sini"}
                                                             </Badge>
-                                                            {hasAddons && (
-                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50 animate-pulse">
+                                                            {isReactivated && (
+                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-red-400 text-red-600 bg-red-50 animate-pulse">
+                                                                    🔄 RE-ORDER
+                                                                </Badge>
+                                                            )}
+                                                            {hasNewAddons && (
+                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50">
                                                                     + TAMBAHAN
                                                                 </Badge>
                                                             )}
@@ -346,20 +372,56 @@ const DrinkQueuePage = () => {
                                             </div>
 
                                             {/* Drink Items Box */}
-                                            <div className={`rounded-xl border-2 overflow-hidden mb-3 ${drinkCompleted ? "border-green-400" : "border-blue-300"}`}>
-                                                <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${drinkCompleted ? "bg-green-500" : "bg-blue-500"}`}>
+                                            <div className={`rounded-xl border-2 overflow-hidden mb-3 ${
+                                                drinkCompleted ? "border-green-400"
+                                                : isReactivated ? "border-red-400"
+                                                : "border-blue-300"
+                                            }`}>
+                                                <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${
+                                                    drinkCompleted ? "bg-green-500"
+                                                    : isReactivated ? "bg-red-500"
+                                                    : "bg-blue-500"
+                                                }`}>
                                                     <Coffee className="h-3.5 w-3.5" />
-                                                    <span>DAFTAR MINUMAN</span>
+                                                    <span>{isReactivated ? "🔄 TAMBAHAN BARU" : "DAFTAR MINUMAN"}</span>
                                                     {drinkCompleted && <span className="ml-auto bg-white/25 px-1.5 py-0.5 rounded text-[10px]">✓ Selesai</span>}
                                                 </div>
-                                                <div className="px-3 py-2 space-y-1.5 max-h-40 overflow-y-auto bg-white/60 dark:bg-transparent">
+                                                <div className="px-3 py-2 space-y-1.5 max-h-48 overflow-y-auto bg-white/60 dark:bg-transparent">
+                                                    {/* Jika re-activated: item original greyed-out */}
+                                                    {isReactivated && originalDrinkItems.length > 0 && (
+                                                        <div className="mb-2 pb-2 border-b border-dashed border-gray-300">
+                                                            <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pesanan Sebelumnya (sudah selesai):</p>
+                                                            {originalDrinkItems.map(item => (
+                                                                <div key={item.id} className="text-xs leading-relaxed opacity-40 line-through">
+                                                                    <div className="flex items-baseline gap-1">
+                                                                        <span className="font-black text-gray-500 text-sm">{item.quantity}×</span>
+                                                                        <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {isReactivated && (
+                                                        <p className="text-[9px] text-red-600 uppercase font-bold tracking-wider mb-1">↓ Buat Sekarang:</p>
+                                                    )}
                                                     {drinkItems.map(item => (
-                                                        <div key={item.id} className={`text-xs leading-relaxed ${item.is_addon ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 rounded-lg px-2 py-1" : ""}`}>
+                                                        <div key={item.id} className={`text-xs leading-relaxed ${
+                                                            isReactivated
+                                                                ? "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-2 py-1.5"
+                                                                : item.is_addon
+                                                                    ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 rounded-lg px-2 py-1"
+                                                                    : ""
+                                                        }`}>
                                                             <div className="flex items-baseline gap-1">
-                                                                <span className="font-black text-blue-600 text-sm">{item.quantity}×</span>
+                                                                <span className={`font-black text-sm ${
+                                                                    isReactivated ? "text-red-600" : "text-blue-600"
+                                                                }`}>{item.quantity}×</span>
                                                                 <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
                                                                 {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
-                                                                {item.is_addon && <span className="text-purple-600 text-[10px] font-bold animate-pulse ml-1">● BARU</span>}
+                                                                {!isReactivated && item.is_addon && (
+                                                                    <span className="text-purple-600 text-[10px] font-bold ml-1">● BARU</span>
+                                                                )}
                                                             </div>
                                                             {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {item.note}</p>}
                                                         </div>
@@ -372,8 +434,8 @@ const DrinkQueuePage = () => {
                                                             <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
                                                         </Button>
                                                     ) : (
-                                                        <Button size="sm" className="w-full h-8 text-xs bg-blue-500 hover:bg-blue-600 text-white shadow-sm" onClick={() => handleDrinkStatusChange(order.id, true)}>
-                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Minuman Selesai
+                                                        <Button size="sm" className={`w-full h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`} onClick={() => handleDrinkStatusChange(order.id, true)}>
+                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
                                                         </Button>
                                                     )}
                                                 </div>

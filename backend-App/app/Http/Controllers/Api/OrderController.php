@@ -73,6 +73,7 @@ class OrderController extends Controller
             'items.*.note' => 'nullable|string',
             'items.*.is_takeaway' => 'boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
+            'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
             'store_id' => 'nullable|exists:stores,id',
         ]);
         
@@ -139,7 +140,11 @@ class OrderController extends Controller
                 
                 // Determine target item for stock (Self or Parent)
                 $stockItem = $menuItem->parent ?: $menuItem;
-                $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : 1);
+                // Use variant_stock_deduction if provided (allows different stock cuts per variant)
+                $variantStockDeduction = isset($item['variant_stock_deduction']) && $item['variant_stock_deduction'] > 0
+                    ? (float)$item['variant_stock_deduction']
+                    : 1.0;
+                $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : $variantStockDeduction);
                 
                 // Check stock availability
                 if (!$menuItem->uses_ingredients && $stockItem->stock < $deductionAmount) {
@@ -168,6 +173,7 @@ class OrderController extends Controller
                     'price' => $finalPrice, // Use final price with variants
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
+                    'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
                 ]);
 
                 // Reduce stock
@@ -390,6 +396,7 @@ class OrderController extends Controller
             'items.*.note' => 'nullable|string',
             'items.*.is_takeaway' => 'boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
+            'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
             'customer_name' => 'nullable|string',
             'order_type' => 'required|in:dine_in,takeaway',
         ]);
@@ -431,7 +438,10 @@ class OrderController extends Controller
                 
                 // Determine target item for stock (Self or Parent)
                 $stockItem = $menuItem->parent ?: $menuItem;
-                $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : 1);
+                $variantStockDeduction = isset($item['variant_stock_deduction']) && $item['variant_stock_deduction'] > 0
+                    ? (float)$item['variant_stock_deduction']
+                    : 1.0;
+                $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : $variantStockDeduction);
                 
                 // Check stock availability
                 if (!$menuItem->uses_ingredients && $stockItem->stock < $deductionAmount) {
@@ -459,6 +469,7 @@ class OrderController extends Controller
                     'price' => $finalPrice,
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
+                    'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
                 ]);
 
                 // Reduce stock
@@ -533,6 +544,7 @@ class OrderController extends Controller
             'items.*.note' => 'nullable|string',
             'items.*.is_takeaway' => 'boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
+            'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
         ]);
 
         DB::beginTransaction();
@@ -546,7 +558,10 @@ class OrderController extends Controller
                 
                 // Determine target item for stock
                 $stockItem = $menuItem->parent ?: $menuItem;
-                $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : 1);
+                $variantStockDeductionAddon = isset($item['variant_stock_deduction']) && $item['variant_stock_deduction'] > 0
+                    ? (float)$item['variant_stock_deduction']
+                    : 1.0;
+                $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : $variantStockDeductionAddon);
                 
                 // Check stock availability
                 if (!$menuItem->uses_ingredients && $stockItem->stock < $deductionAmount) {
@@ -575,6 +590,7 @@ class OrderController extends Controller
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
                     'is_addon' => true, // Mark as add-on
+                    'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
                 ]);
 
                 // Reduce stock
