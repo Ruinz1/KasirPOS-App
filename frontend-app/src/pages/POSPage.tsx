@@ -2030,6 +2030,7 @@ export default function POSPage() {
                           <SelectContent>
                             <SelectItem value="Tenis" className="text-xs">Tipe: Tenis</SelectItem>
                             <SelectItem value="Urat" className="text-xs">Tipe: Urat</SelectItem>
+                            <SelectItem value="Halus" className="text-xs">Tipe: Halus</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

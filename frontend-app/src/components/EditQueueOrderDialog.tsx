@@ -599,6 +599,7 @@ export function EditQueueOrderDialog({
                                                                 <SelectContent>
                                                                     <SelectItem value="Tenis" className="text-xs">Tenis</SelectItem>
                                                                     <SelectItem value="Urat" className="text-xs">Urat</SelectItem>
+                                                                    <SelectItem value="Halus" className="text-xs">Halus</SelectItem>
                                                                 </SelectContent>
                                                             </Select>
                                                         </div>
