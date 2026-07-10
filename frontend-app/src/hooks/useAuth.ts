@@ -13,6 +13,9 @@ interface User {
     store_id?: number | null;
 }
 
+// Jabatan yang boleh menahan/melanjutkan (hold) pesanan di antrian makanan & minuman
+export const HOLD_QUEUE_POSITIONS = ['Kitchen Assistant', 'Koki', 'Kasir', 'Manager', 'Supervisor', 'Admin'];
+
 export function useAuth() {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
@@ -47,6 +50,14 @@ export function useAuth() {
         return Array.isArray(user.permissions) && user.permissions.includes(permission);
     }, [user]);
 
+    const hasPosition = useCallback((position: string) => {
+        return Array.isArray(user?.positions) && user.positions.includes(position);
+    }, [user]);
+
+    const hasAnyPosition = useCallback((positions: string[]) => {
+        return Array.isArray(user?.positions) && user.positions.some(p => positions.includes(p));
+    }, [user]);
+
     return {
         user,
         loading,
@@ -55,5 +66,7 @@ export function useAuth() {
         isKaryawan,
         canEdit,
         hasPermission,
+        hasPosition,
+        hasAnyPosition,
     };
 }

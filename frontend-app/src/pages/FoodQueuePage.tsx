@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth, HOLD_QUEUE_POSITIONS } from "@/hooks/useAuth";
 import {
     ClipboardList, CheckCircle2, Clock, Package, Undo2,
     Utensils, Pencil, RefreshCw, ChefHat
@@ -124,6 +125,9 @@ const FoodQueuePage = () => {
     const [holdDialogOrder, setHoldDialogOrder] = useState<QueueOrder | null>(null);
     const [holdReason, setHoldReason] = useState("");
     const { toast } = useToast();
+    const { canEdit, hasAnyPosition } = useAuth();
+    // Hold/lanjutkan pesanan: admin & owner, atau jabatan dapur/manajemen (mis. Kitchen Assistant)
+    const canHold = canEdit() || hasAnyPosition(HOLD_QUEUE_POSITIONS);
     const prevOrdersRef = useRef<QueueOrder[]>([]);
 
     const playNotificationSound = () => {
@@ -527,7 +531,7 @@ const FoodQueuePage = () => {
                                                             <Button size="sm" className={`flex-1 h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-orange-500 hover:bg-orange-600"}`} onClick={() => handleFoodStatusChange(order.id, true)}>
                                                                 <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Makanan Selesai"}
                                                             </Button>
-                                                            {isHold ? (
+                                                            {canHold && (isHold ? (
                                                                 <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-yellow-500 text-yellow-600 bg-yellow-50 hover:bg-yellow-100 hover:text-yellow-700 shadow-sm" onClick={async () => {
                                                                     await api.put(`/queue/${order.id}/status`, { queue_status: "pending" });
                                                                     fetchQueue();
@@ -541,7 +545,7 @@ const FoodQueuePage = () => {
                                                                 }} title="Tahan Pesanan">
                                                                     <Clock className="h-4 w-4" />
                                                                 </Button>
-                                                            )}
+                                                            ))}
                                                         </div>
                                                     )}
                                                 </div>

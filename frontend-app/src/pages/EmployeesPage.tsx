@@ -22,7 +22,19 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 
 const roles = ['karyawan']; // Only allow creating employees, not admin or owner
-const availablePositions = ['Barista', 'Kasir', 'Manager', 'Staff', 'Supervisor'];
+// Jabatan yang tersedia — disesuaikan untuk rumah makan.
+// 'Kitchen Assistant' juga menentukan akses tombol Tahan Pesanan (lihat HOLD_QUEUE_POSITIONS di useAuth).
+const availablePositions = [
+  'Manager',
+  'Supervisor',
+  'Admin',
+  'Kasir',
+  'Koki',
+  'Kitchen Assistant',
+  'Waiter/Waitress',
+  'Steward',
+  'Cleaning Service',
+];
 
 interface Store {
   id: number;

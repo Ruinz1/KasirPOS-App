@@ -9,6 +9,27 @@ use Illuminate\Support\Facades\Auth;
 class QueueController extends Controller
 {
     /**
+     * Jabatan yang boleh menahan/melanjutkan (hold) pesanan di antrian.
+     * Harus sinkron dengan HOLD_QUEUE_POSITIONS di frontend (src/hooks/useAuth.ts).
+     */
+    private const HOLD_QUEUE_POSITIONS = ['Kitchen Assistant', 'Koki', 'Kasir', 'Manager', 'Supervisor', 'Admin'];
+
+    /**
+     * Cek apakah user boleh menahan/melanjutkan pesanan:
+     * role admin/owner, atau karyawan dengan jabatan dapur/manajemen.
+     */
+    private function canHoldQueue($user): bool
+    {
+        if (in_array($user->role, ['admin', 'owner'])) {
+            return true;
+        }
+
+        $positions = is_array($user->positions) ? $user->positions : [];
+
+        return !empty(array_intersect(self::HOLD_QUEUE_POSITIONS, $positions));
+    }
+
+    /**
      * Get all orders in queue (FIFO order) - Today only
      */
     public function index(Request $request)
@@ -54,11 +75,21 @@ class QueueController extends Controller
         ]);
 
         $order = Order::with('items.menuItem')->findOrFail($id);
-        
+
         // Check if user has access to this store
         $user = Auth::user();
         if ($user->role !== 'admin' && $order->store_id !== $user->store_id) {
             return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Validasi jabatan untuk aksi hold & resume (lanjutkan dari hold)
+        $isHoldAction = $request->queue_status === 'hold';
+        $isResumeAction = $order->queue_status === 'hold'
+            && in_array($request->queue_status, ['pending', 'in_progress']);
+        if (($isHoldAction || $isResumeAction) && !$this->canHoldQueue($user)) {
+            return response()->json([
+                'message' => 'Jabatan Anda tidak diizinkan menahan/melanjutkan pesanan',
+            ], 403);
         }
 
         $drinkCategories = ['minuman', 'drink', 'beverage', 'drinks'];
@@ -138,11 +169,21 @@ class QueueController extends Controller
         ]);
 
         $order = Order::with('items.menuItem')->findOrFail($id);
-        
+
         // Check if user has access to this store
         $user = Auth::user();
         if ($user->role !== 'admin' && $order->store_id !== $user->store_id) {
             return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Validasi jabatan untuk aksi hold & resume (lanjutkan dari hold)
+        $isHoldAction = $request->drink_queue_status === 'hold';
+        $isResumeAction = $order->drink_queue_status === 'hold'
+            && $request->drink_queue_status === 'pending';
+        if (($isHoldAction || $isResumeAction) && !$this->canHoldQueue($user)) {
+            return response()->json([
+                'message' => 'Jabatan Anda tidak diizinkan menahan/melanjutkan pesanan',
+            ], 403);
         }
 
         $drinkCategories = ['minuman', 'drink', 'beverage', 'drinks'];

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth, HOLD_QUEUE_POSITIONS } from "@/hooks/useAuth";
 import { CheckCircle2, Undo2, Coffee, Pencil, RefreshCw, GlassWater, Clock } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
@@ -103,6 +104,9 @@ const DrinkQueuePage = () => {
     const [holdDialogOrder, setHoldDialogOrder] = useState<QueueOrder | null>(null);
     const [holdReason, setHoldReason] = useState("");
     const { toast } = useToast();
+    const { canEdit, hasAnyPosition } = useAuth();
+    // Hold/lanjutkan pesanan: admin & owner, atau jabatan dapur/manajemen (mis. Kitchen Assistant)
+    const canHold = canEdit() || hasAnyPosition(HOLD_QUEUE_POSITIONS);
     const prevOrdersRef = useRef<QueueOrder[]>([]);
 
     const playNotificationSound = () => {
@@ -473,7 +477,7 @@ const DrinkQueuePage = () => {
                                                             <Button size="sm" className={`flex-1 h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`} onClick={() => handleDrinkStatusChange(order.id, true)}>
                                                                 <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
                                                             </Button>
-                                                            {isHold ? (
+                                                            {canHold && (isHold ? (
                                                                 <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 shadow-sm" onClick={async () => {
                                                                     await api.put(`/queue/${order.id}/drink-status`, { drink_queue_status: "pending" });
                                                                     fetchQueue();
@@ -487,7 +491,7 @@ const DrinkQueuePage = () => {
                                                                 }} title="Tahan Pesanan">
                                                                     <Clock className="h-4 w-4" />
                                                                 </Button>
-                                                            )}
+                                                            ))}
                                                         </div>
                                                     )}
                                                 </div>
