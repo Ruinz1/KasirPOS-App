@@ -768,11 +768,11 @@ const QueuePage = () => {
                                                                         <CheckCircle2 className="h-3 w-3 mr-1" /> Makanan Selesai
                                                                     </Button>
                                                                     {canHold && (foodHold ? (
-                                                                        <Button size="sm" className="w-full h-7 text-xs bg-yellow-500 hover:bg-yellow-600 text-white" onClick={() => handleResume(order.id, "food")}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => handleResume(order.id, "food")}>
                                                                             <RefreshCw className="h-3 w-3 mr-1" /> Lanjutkan Makanan
                                                                         </Button>
                                                                     ) : (
-                                                                        <Button size="sm" variant="outline" className="w-full h-7 text-xs border-yellow-400 text-yellow-600 hover:bg-yellow-50 hover:text-yellow-700" onClick={() => { setHoldTarget({ order, type: "food" }); setHoldReason(""); }}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => { setHoldTarget({ order, type: "food" }); setHoldReason(""); }}>
                                                                             <Clock className="h-3 w-3 mr-1" /> Tahan Makanan
                                                                         </Button>
                                                                     ))}
@@ -925,11 +925,11 @@ const QueuePage = () => {
                                                                         <CheckCircle2 className="h-3 w-3 mr-1" /> Minuman Selesai
                                                                     </Button>
                                                                     {canHold && (drinkHold ? (
-                                                                        <Button size="sm" className="w-full h-7 text-xs bg-slate-500 hover:bg-slate-600 text-white" onClick={() => handleResume(order.id, "drink")}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => handleResume(order.id, "drink")}>
                                                                             <RefreshCw className="h-3 w-3 mr-1" /> Lanjutkan Minuman
                                                                         </Button>
                                                                     ) : (
-                                                                        <Button size="sm" variant="outline" className="w-full h-7 text-xs border-slate-400 text-slate-600 hover:bg-slate-100 hover:text-slate-700" onClick={() => { setHoldTarget({ order, type: "drink" }); setHoldReason(""); }}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => { setHoldTarget({ order, type: "drink" }); setHoldReason(""); }}>
                                                                             <Clock className="h-3 w-3 mr-1" /> Tahan Minuman
                                                                         </Button>
                                                                     ))}
