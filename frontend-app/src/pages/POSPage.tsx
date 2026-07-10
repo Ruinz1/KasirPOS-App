@@ -24,15 +24,18 @@ import {
   MessageSquare,
   ArrowUpAZ,
   ArrowDownAZ,
-  ArrowUpDown
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
-import { formatItemNote } from '@/lib/utils';
+import { formatItemNote, storageUrl } from '@/lib/utils';
 import { MemberSearch } from '@/components/pos/MemberSearch';
 import type { Member, PointReward } from '@/types/member';
 
@@ -52,12 +55,16 @@ interface MenuItem {
   current_stock?: number;
   cogs?: number;
   menu_ingredients?: Array<{
-    inventory_item: {
+    id: number;                 // id baris menu_ingredient (identitas pilihan Tipe/opsional)
+    inventory_item?: {          // null untuk opsi custom (tanpa stok)
       id: number;
       name: string;
       current_stock: number;
-    };
+    } | null;
     amount: number;
+    role?: 'fixed' | 'option' | 'optional';
+    is_default?: boolean;
+    label?: string;
   }>;
   variants?: Array<{
     name: string;
@@ -73,6 +80,10 @@ interface CartItem {
   is_takeaway?: boolean;
   variant?: string;
   variant_price?: number;
+  bakso_type?: string;                    // legacy Tipe hardcoded (menu tanpa bahan Tipe terkonfigurasi)
+  selected_type_id?: number;              // inventory_item_id tipe terpilih (dari bahan role=option)
+  selected_type_name?: string;            // label tampil tipe terpilih
+  removed_ingredient_ids?: number[];      // inventory_item_id bahan opsional yang dihilangkan
 }
 
 const BAKSO_VARIANTS = [
@@ -118,6 +129,7 @@ export default function POSPage() {
   const { user, hasPermission, loading: authLoading, isAdmin, isOwner, isKaryawan } = useAuth();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [cartOpen, setCartOpen] = useState(false); // Mobile: keranjang tampil ringkas dulu, buka untuk lihat total & Bayar
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
@@ -195,26 +207,59 @@ export default function POSPage() {
       setPaymentMethod(order.payment_method || 'cash');
       setPaidAmount(order.paid_amount ? String(order.paid_amount) : '');
 
-      // Map items — restore variant/kuah & bakso type from note
+      // Map items — restore variant/kuah, Tipe & bahan opsional dari note
       const cartItems: CartItem[] = order.items.map((item: any) => {
         const noteText = item.note || '';
+
+        // Gunakan menu lengkap (dengan role bahan) dari daftar menu bila tersedia.
+        const fullMenu = menuItems.find(m => m.id === item.menu_item?.id) || item.menu_item;
+        const menuIngs: any[] = (fullMenu?.menu_ingredients || []) as any[];
+        const optionIngs = menuIngs.filter(mi => mi.role === 'option');
+        const optionalIngs = menuIngs.filter(mi => mi.role === 'optional');
+        const nameOf = (mi: any) => mi.label || mi.inventory_item?.name || '';
 
         // Extract variant from note (Kuah or Variasi prefix)
         const variantMatch = noteText.match(/(?:Kuah|Variasi):\s*([^.]+)/i);
         const variantName = variantMatch ? variantMatch[1].trim() : undefined;
 
-        // Extract bakso type from note
+        // Extract Tipe from note
         const isBaksoSpesial = item.menu_item?.name?.toLowerCase().includes('bakso') && item.menu_item?.name?.toLowerCase().includes('spesial');
         const typeMatch = noteText.match(/Tipe:\s*([^.]+)/i);
-        let baksoType = typeMatch ? typeMatch[1].trim() : undefined;
-        if (isBaksoSpesial && !baksoType) {
-          baksoType = 'Tenis';
+        const typeNameFromNote = typeMatch ? typeMatch[1].trim() : undefined;
+
+        // Tipe berbasis bahan (role=option) → petakan ke inventory_item_id
+        let selectedTypeId: number | undefined;
+        let selectedTypeName: string | undefined;
+        let baksoType: string | undefined;
+        if (optionIngs.length > 0) {
+          const matched = typeNameFromNote
+            ? optionIngs.find(mi => nameOf(mi) === typeNameFromNote)
+            : undefined;
+          const chosen = matched || optionIngs.find(mi => mi.is_default) || optionIngs[0];
+          if (chosen) {
+            selectedTypeId = chosen.id;
+            selectedTypeName = nameOf(chosen);
+          }
+        } else {
+          baksoType = typeNameFromNote;
+          if (isBaksoSpesial && !baksoType) baksoType = 'Tenis';
+        }
+
+        // Bahan opsional yang dihilangkan (dari "Tanpa: ...")
+        let removedIds: number[] = [];
+        const removedMatch = noteText.match(/Tanpa:\s*([^.]+)/i);
+        if (removedMatch && optionalIngs.length > 0) {
+          const removedNames = removedMatch[1].split(',').map((s: string) => s.trim().toLowerCase());
+          removedIds = optionalIngs
+            .filter(mi => removedNames.includes(nameOf(mi).toLowerCase()))
+            .map(mi => mi.id);
         }
 
         // Separate user note from prefixes
         const userNote = noteText
           .replace(/^(?:Kuah|Variasi):\s*[^.]+\.?\s*/i, '')
           .replace(/Tipe:\s*[^.]+\.?\s*/i, '')
+          .replace(/Tanpa:\s*[^.]+\.?\s*/i, '')
           .trim() || undefined;
 
         // Try to find variant price from menu item variants
@@ -233,13 +278,16 @@ export default function POSPage() {
         }
 
         return {
-          menuItem: item.menu_item,
+          menuItem: fullMenu,
           quantity: item.quantity,
           note: userNote,
           is_takeaway: !!item.is_takeaway,
           variant: variantName,
           variant_price: variantPrice,
           bakso_type: baksoType,
+          selected_type_id: selectedTypeId,
+          selected_type_name: selectedTypeName,
+          removed_ingredient_ids: removedIds,
         };
       });
       setCart(cartItems);
@@ -463,9 +511,17 @@ export default function POSPage() {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
-  // Helper to generate unique cart item key
-  const getCartItemKey = (menuId: number, isTakeaway?: boolean, variant?: string, baksoType?: string) => {
-    return `${menuId}_${isTakeaway ? 'takeaway' : 'dinein'}_${variant || 'none'}_${baksoType || 'none'}`;
+  // Helper to generate unique cart item key (kustomisasi berbeda = baris keranjang berbeda)
+  const getCartItemKey = (c: CartItem) => {
+    const removed = (c.removed_ingredient_ids || []).slice().sort((a, b) => a - b).join('-');
+    return [
+      c.menuItem.id,
+      c.is_takeaway ? 'takeaway' : 'dinein',
+      c.variant || 'none',
+      c.bakso_type || 'none',
+      c.selected_type_id ?? 'none',
+      removed || 'none',
+    ].join('_');
   };
 
   // Helper to get variants (strictly from DB)
@@ -474,6 +530,25 @@ export default function POSPage() {
       return item.variants;
     }
     return []; // No implicit legacy variants
+  };
+
+  // Bahan role=option (grup "Tipe") sebuah menu — kasir pilih satu. Termasuk opsi custom (tanpa stok).
+  const getTypeOptions = (item: MenuItem) =>
+    (item.menu_ingredients || []).filter(ing => ing.role === 'option');
+
+  // Bahan role=optional (checkbox di keranjang, default tercentang). Termasuk opsi custom.
+  const getOptionalIngredients = (item: MenuItem) =>
+    (item.menu_ingredients || []).filter(ing => ing.role === 'optional');
+
+  // Nama tampil sebuah bahan/opsi (label custom, atau nama inventory).
+  const ingredientDisplayName = (ing: { label?: string; inventory_item?: { name: string } | null }) =>
+    ing.label || ing.inventory_item?.name || '';
+
+  // Tipe default awal untuk sebuah menu (bahan option is_default, atau option pertama).
+  const getDefaultTypeOption = (item: MenuItem) => {
+    const options = getTypeOptions(item);
+    if (options.length === 0) return undefined;
+    return options.find(o => o.is_default) || options[0];
   };
 
   const addToCart = (item: MenuItem) => {
@@ -493,30 +568,43 @@ export default function POSPage() {
       }
     }
 
-    // Default bakso_type if menu is bakso and contains "spesial"
-    const isBaksoSpesial = item.name.toLowerCase().includes('bakso') && item.name.toLowerCase().includes('spesial');
-    const defaultBaksoType = isBaksoSpesial ? 'Tenis' : undefined;
+    // Tipe dari bahan (role=option) — pilih default awal.
+    const defaultType = getDefaultTypeOption(item);
+    const typePayload = defaultType
+      ? {
+          selected_type_id: defaultType.id,
+          selected_type_name: ingredientDisplayName(defaultType),
+        }
+      : {};
 
-    // Find existing item with same menu, takeaway status, variant, and bakso_type
-    const existing = cart.find((c) =>
-      c.menuItem.id === item.id &&
-      c.is_takeaway === false && // Default is dine-in when adding
-      c.variant === variantPayload.variant &&
-      c.bakso_type === defaultBaksoType
-    );
+    // Legacy Tipe hardcoded: hanya bila menu tak punya bahan Tipe terkonfigurasi.
+    const isBaksoSpesial = item.name.toLowerCase().includes('bakso') && item.name.toLowerCase().includes('spesial');
+    const defaultBaksoType = (!defaultType && isBaksoSpesial) ? 'Tenis' : undefined;
+
+    const newItem: CartItem = {
+      menuItem: item,
+      quantity: 1,
+      is_takeaway: false,
+      bakso_type: defaultBaksoType,
+      removed_ingredient_ids: [],
+      ...typePayload,
+      ...variantPayload,
+    };
+
+    // Gabungkan dengan baris keranjang identik (kustomisasi sama).
+    const newKey = getCartItemKey(newItem);
+    const existing = cart.find((c) => getCartItemKey(c) === newKey);
 
     if (existing) {
-      // Increment quantity of existing matching item
-      const existingKey = getCartItemKey(existing.menuItem.id, existing.is_takeaway, existing.variant, existing.bakso_type);
-      updateCartQuantity(existingKey, existing.quantity + 1);
+      updateCartQuantity(newKey, existing.quantity + 1);
     } else {
-      setCart([...cart, { menuItem: item, quantity: 1, is_takeaway: false, bakso_type: defaultBaksoType, ...variantPayload }]);
+      setCart([...cart, newItem]);
     }
   };
 
   const removeFromCart = (cartKey: string) => {
     setCart(cart.filter((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+      const key = getCartItemKey(c);
       return key !== cartKey;
     }));
   };
@@ -526,7 +614,7 @@ export default function POSPage() {
       removeFromCart(cartKey);
     } else {
       setCart(cart.map((c) => {
-        const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+        const key = getCartItemKey(c);
         return key === cartKey ? { ...c, quantity } : c;
       }));
     }
@@ -534,14 +622,14 @@ export default function POSPage() {
 
   const updateCartNote = (cartKey: string, note: string) => {
     setCart(cart.map((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+      const key = getCartItemKey(c);
       return key === cartKey ? { ...c, note } : c;
     }));
   };
 
   const updateCartVariant = (cartKey: string, variantName: string) => {
     setCart(prevCart => prevCart.map((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+      const key = getCartItemKey(c);
       if (key === cartKey) {
         const variants = getItemVariants(c.menuItem);
         const variantObj = variants.find(v => v.name === variantName);
@@ -577,15 +665,40 @@ export default function POSPage() {
     }));
   };
 
+  // Pilih Tipe (bahan role=option) untuk sebuah baris keranjang. ingredientId = id menu_ingredient.
+  const updateCartType = (cartKey: string, ingredientId: number) => {
+    setCart(prevCart => prevCart.map((c) => {
+      if (getCartItemKey(c) !== cartKey) return c;
+      const opt = getTypeOptions(c.menuItem).find(o => o.id === ingredientId);
+      if (!opt) return c;
+      return {
+        ...c,
+        selected_type_id: opt.id,
+        selected_type_name: ingredientDisplayName(opt),
+      };
+    }));
+  };
+
+  // Centang/hilangkan bahan opsional (mie/bihun). checked=true berarti disertakan (dipotong).
+  const toggleCartOptional = (cartKey: string, inventoryId: number, checked: boolean) => {
+    setCart(prevCart => prevCart.map((c) => {
+      if (getCartItemKey(c) !== cartKey) return c;
+      const set = new Set(c.removed_ingredient_ids || []);
+      if (checked) set.delete(inventoryId); else set.add(inventoryId);
+      return { ...c, removed_ingredient_ids: Array.from(set) };
+    }));
+  };
+
   const toggleCartTakeaway = (cartKey: string) => {
     setCart(cart.map((c) => {
-      const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+      const key = getCartItemKey(c);
       return key === cartKey ? { ...c, is_takeaway: !c.is_takeaway } : c;
     }));
   };
 
   const clearCart = () => {
     setCart([]);
+    setCartOpen(false); // Mobile: kembali ke tampilan menu setelah keranjang dikosongkan
     setCustomerName('');
     setSelectedMember(null);
     setSelectedReward(null);
@@ -715,15 +828,32 @@ export default function POSPage() {
           variantNote = isBaksoMenu ? `Kuah: ${c.variant}` : `Variasi: ${c.variant}`;
         }
         
-        // Construct note with bakso type info
+        // Construct note with Tipe info (dari bahan role=option, atau legacy hardcoded)
         let typeNote = '';
-        const isBaksoSpesial = isBaksoMenu && c.menuItem.name.toLowerCase().includes('spesial');
-        if (isBaksoSpesial && c.bakso_type) {
-          typeNote = `Tipe: ${c.bakso_type}`;
+        const typeOptions = getTypeOptions(c.menuItem);
+        if (typeOptions.length > 0 && c.selected_type_id) {
+          const opt = typeOptions.find(o => o.id === c.selected_type_id);
+          const typeName = c.selected_type_name || (opt ? ingredientDisplayName(opt) : undefined);
+          if (typeName) typeNote = `Tipe: ${typeName}`;
+        } else {
+          const isBaksoSpesial = isBaksoMenu && c.menuItem.name.toLowerCase().includes('spesial');
+          if (isBaksoSpesial && c.bakso_type) {
+            typeNote = `Tipe: ${c.bakso_type}`;
+          }
         }
-        
+
+        // Construct note with removed optional ingredients (jelas untuk antrian)
+        let removedNote = '';
+        const removedIds = c.removed_ingredient_ids || [];
+        if (removedIds.length > 0) {
+          const names = getOptionalIngredients(c.menuItem)
+            .filter(ing => removedIds.includes(ing.id))
+            .map(ing => ingredientDisplayName(ing));
+          if (names.length > 0) removedNote = `Tanpa: ${names.join(', ')}`;
+        }
+
         const userNote = c.note || '';
-        const combinedNote = [variantNote, typeNote, userNote].filter(Boolean).join('. ');
+        const combinedNote = [variantNote, typeNote, removedNote, userNote].filter(Boolean).join('. ');
 
         return {
           menu_item_id: c.menuItem.id,
@@ -732,6 +862,8 @@ export default function POSPage() {
           is_takeaway: Boolean(c.is_takeaway),
           additional_price: Number(c.variant_price || 0),
           variant_stock_deduction: Number((c as any).variant_stock_deduction ?? 1),
+          selected_type_id: c.selected_type_id ?? null,
+          removed_ingredient_ids: removedIds,
         };
       });
     };
@@ -972,7 +1104,7 @@ export default function POSPage() {
     <MainLayout>
       <div className="h-full flex flex-col md:flex-row">
         {/* Left - Menu Selection */}
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="flex-1 p-3 md:p-6 overflow-y-auto">
 
 
 
@@ -1606,7 +1738,7 @@ export default function POSPage() {
           </Dialog>
 
           <div className="mb-6">
-            <div className="flex justify-between items-start mb-4">
+            <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
               <div>
                 <div className="flex items-center gap-3 mb-2">
                   <h1 className="text-2xl font-display font-bold">Kasir</h1>
@@ -1642,7 +1774,7 @@ export default function POSPage() {
                 </button>
               </div>
               {isAdmin() && (
-                <div className="w-[200px]">
+                <div className="w-full sm:w-[200px]">
                   <Select
                     value={selectedStoreId}
                     onValueChange={(val) => setSelectedStoreId(val)}
@@ -1824,11 +1956,47 @@ export default function POSPage() {
         </div>
 
         {/* Right - Cart */}
-        <div className="w-full md:w-96 bg-card border-l border-border flex flex-col h-[40vh] md:h-full shadow-lg md:shadow-none">
-          <div className="p-6 border-b border-border flex justify-between items-center bg-card">
-            <div>
-              <h2 className="font-display font-semibold text-lg">Keranjang</h2>
-              <p className="text-sm text-muted-foreground">{cart.length} item</p>
+        <div className={`bg-card border-t md:border-t-0 md:border-l border-border flex flex-col shadow-lg md:shadow-none transition-all duration-300 md:static md:w-96 md:h-full md:z-auto md:inset-auto ${cartOpen ? 'fixed inset-0 z-50 w-full h-[100dvh]' : 'relative w-full h-auto'}`}>
+          {/* Mobile: bar ringkas — total & Bayar tersembunyi, ketuk untuk membuka */}
+          <button
+            type="button"
+            onClick={() => setCartOpen(true)}
+            className={`md:hidden w-full items-center justify-between px-4 py-3 ${cartOpen ? 'hidden' : 'flex'}`}
+          >
+            <span className="flex items-center gap-2">
+              <span className="relative">
+                <ShoppingBag className="w-6 h-6 text-primary" />
+                {cart.length > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-primary text-primary-foreground text-[10px] font-bold min-w-4 h-4 px-1 flex items-center justify-center rounded-full">
+                    {cart.length}
+                  </span>
+                )}
+              </span>
+              <span className="font-semibold">Keranjang</span>
+              <span className="text-sm text-muted-foreground">{cart.length} item</span>
+            </span>
+            <span className="flex items-center gap-1 text-primary font-medium text-sm">
+              {cart.length > 0 ? 'Lihat & Bayar' : 'Buka'}
+              <ChevronUp className="w-5 h-5" />
+            </span>
+          </button>
+
+          {/* Isi keranjang — selalu tampil di desktop, dapat dibuka/tutup di mobile */}
+          <div className={`flex-1 min-h-0 flex-col ${cartOpen ? 'flex' : 'hidden'} md:flex`}>
+          <div className="p-4 md:p-6 border-b border-border flex justify-between items-center bg-card">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCartOpen(false)}
+                className="md:hidden p-1 -ml-1 rounded hover:bg-secondary text-muted-foreground"
+                aria-label="Tutup keranjang"
+              >
+                <ChevronDown className="w-5 h-5" />
+              </button>
+              <div>
+                <h2 className="font-display font-semibold text-lg">Keranjang</h2>
+                <p className="text-sm text-muted-foreground">{cart.length} item</p>
+              </div>
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex bg-muted/50 p-1 rounded-lg border border-border shadow-inner">
@@ -1874,7 +2042,7 @@ export default function POSPage() {
           </div>
 
           {/* Customer Name & Member */}
-          <div className="p-4 border-b border-border bg-card/50 space-y-2">
+          <div className="p-2 md:p-4 border-b border-border bg-card/50 space-y-1.5 md:space-y-2">
             {!isAdmin() && (
               <MemberSearch
                 selectedMember={selectedMember}
@@ -1889,7 +2057,7 @@ export default function POSPage() {
             )}
             {!selectedMember && (
               <Input
-                className="input-coffee bg-background"
+                className="input-coffee bg-background py-2 md:py-3 text-sm"
                 placeholder="Nama Pembeli (opsional)"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
@@ -1904,7 +2072,7 @@ export default function POSPage() {
               <div className="text-center py-12 text-muted-foreground">
                 {storeInfo.image ? (
                   <img
-                    src={`${import.meta.env.VITE_API_URL || ''}/storage/${storeInfo.image}`}
+                    src={storageUrl(storeInfo.image)}
                     alt="Logo Toko"
                     className="w-20 h-20 mx-auto mb-3 opacity-80 object-contain"
                   />
@@ -1916,7 +2084,7 @@ export default function POSPage() {
               </div>
             ) : (
               cart.map((item) => {
-                const cartKey = getCartItemKey(item.menuItem.id, item.is_takeaway, item.variant, item.bakso_type);
+                const cartKey = getCartItemKey(item);
 
                 return (
                   <div key={cartKey} className="bg-secondary/50 rounded-lg p-4">
@@ -2010,14 +2178,51 @@ export default function POSPage() {
                       </div>
                     )}
 
-                    {/* Tipe Bakso Selection */}
-                    {item.menuItem.name.toLowerCase().includes('bakso') && item.menuItem.name.toLowerCase().includes('spesial') && (
+                    {/* Tipe Selection dari bahan (role=option) */}
+                    {getTypeOptions(item.menuItem).length > 0 && (
+                      <div className="mb-3">
+                        <Select
+                          value={item.selected_type_id ? String(item.selected_type_id) : ''}
+                          onValueChange={(val) => updateCartType(cartKey, Number(val))}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-full bg-background border-border">
+                            <div className="flex justify-between w-full pr-2">
+                              <span>Tipe: {item.selected_type_name || 'Pilih tipe'}</span>
+                            </div>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getTypeOptions(item.menuItem).map((opt) => {
+                              // Opsi custom (tanpa inventory) selalu tersedia.
+                              const outOfStock = !!opt.inventory_item &&
+                                Number(opt.inventory_item.current_stock ?? 0) < Number(opt.amount);
+                              const displayName = ingredientDisplayName(opt);
+                              return (
+                                <SelectItem
+                                  key={opt.id}
+                                  value={String(opt.id)}
+                                  className="text-xs"
+                                  disabled={outOfStock}
+                                >
+                                  <span className={outOfStock ? 'line-through opacity-50' : ''}>
+                                    Tipe: {displayName}{outOfStock ? ' (habis)' : ''}
+                                  </span>
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {/* Tipe Bakso Selection (legacy — hanya bila tak ada bahan Tipe terkonfigurasi) */}
+                    {getTypeOptions(item.menuItem).length === 0 &&
+                     item.menuItem.name.toLowerCase().includes('bakso') && item.menuItem.name.toLowerCase().includes('spesial') && (
                       <div className="mb-3">
                         <Select
                           value={item.bakso_type || 'Tenis'}
                           onValueChange={(val) => {
                             setCart(prevCart => prevCart.map(c => {
-                              const key = getCartItemKey(c.menuItem.id, c.is_takeaway, c.variant, c.bakso_type);
+                              const key = getCartItemKey(c);
                               return key === cartKey ? { ...c, bakso_type: val } : c;
                             }));
                           }}
@@ -2033,6 +2238,31 @@ export default function POSPage() {
                             <SelectItem value="Halus" className="text-xs">Tipe: Halus</SelectItem>
                           </SelectContent>
                         </Select>
+                      </div>
+                    )}
+
+                    {/* Bahan opsional (checkbox, default tercentang) */}
+                    {getOptionalIngredients(item.menuItem).length > 0 && (
+                      <div className="mb-3 space-y-1.5">
+                        {getOptionalIngredients(item.menuItem).map((ing) => {
+                          const rowId = ing.id;
+                          const checked = !(item.removed_ingredient_ids || []).includes(rowId);
+                          const displayName = ingredientDisplayName(ing);
+                          return (
+                            <label
+                              key={rowId}
+                              className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                            >
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={(v) => toggleCartOptional(cartKey, rowId, Boolean(v))}
+                              />
+                              <span className={checked ? '' : 'line-through text-muted-foreground'}>
+                                {displayName}{checked ? '' : ' (tanpa)'}
+                              </span>
+                            </label>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -2085,24 +2315,24 @@ export default function POSPage() {
 
           {/* Cart Summary */}
           {cart.length > 0 && (
-            <div className="p-4 border-t border-border bg-secondary/30">
-              <div className="space-y-2 mb-4">
-                <div className="flex justify-between text-sm">
+            <div className="p-3 md:p-4 border-t border-border bg-secondary/30">
+              <div className="space-y-1 md:space-y-2 mb-2 md:mb-4">
+                <div className="flex justify-between text-xs md:text-sm">
                   <span className="text-muted-foreground">Subtotal</span>
                   <span>{formatCurrency(cartTotal)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-xs md:text-sm">
                   <span className="text-muted-foreground">HPP</span>
                   <span className="text-warning">{formatCurrency(cartCogs)}</span>
                 </div>
-                <div className="flex justify-between text-sm font-semibold">
+                <div className="flex justify-between text-xs md:text-sm font-semibold">
                   <span>Profit</span>
                   <span className="text-success">{formatCurrency(cartProfit)}</span>
                 </div>
               </div>
-              <div className="flex justify-between items-center mb-4 pt-3 border-t border-border">
-                <span className="font-semibold">Total</span>
-                <span className="text-2xl font-bold">{formatCurrency(cartTotal)}</span>
+              <div className="flex justify-between items-center mb-3 md:mb-4 pt-2 md:pt-3 border-t border-border">
+                <span className="font-semibold text-sm md:text-base">Total</span>
+                <span className="text-xl md:text-2xl font-bold">{formatCurrency(cartTotal)}</span>
               </div>
               {selectedMember && !editingOrderId && !addToOrderId && (
                 <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-0.5">
@@ -2124,7 +2354,7 @@ export default function POSPage() {
                 </button>
               )}
               <button
-                className="btn-accent w-full py-4 text-lg font-semibold"
+                className="btn-accent w-full py-3 md:py-4 text-base md:text-lg font-semibold"
                 onClick={() => {
                   if (editingOrderId) {
                     handleCheckout('paid');
@@ -2139,6 +2369,7 @@ export default function POSPage() {
               </button>
             </div>
           )}
+          </div>
         </div>
 
         {/* Payment Dialog */}
@@ -2381,7 +2612,7 @@ export default function POSPage() {
                     <div className="flex justify-center mb-1">
                       {storeInfo.image ? (
                         <img
-                          src={`${import.meta.env.VITE_API_URL || ''}/storage/${storeInfo.image}`}
+                          src={storageUrl(storeInfo.image)}
                           alt="Store Logo"
                           className="w-12 h-12 object-cover rounded-full"
                         />
@@ -2578,7 +2809,7 @@ export default function POSPage() {
               <div className="flex justify-center mb-1">
                 {storeInfo.image ? (
                   <img
-                    src={`${import.meta.env.VITE_API_URL || ''}/storage/${storeInfo.image}`}
+                    src={storageUrl(storeInfo.image)}
                     alt="Store Logo"
                     className="w-16 h-16 object-contain"
                     style={{ maxWidth: '100%', height: 'auto' }}

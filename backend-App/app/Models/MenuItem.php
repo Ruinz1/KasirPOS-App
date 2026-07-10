@@ -122,14 +122,23 @@ class MenuItem extends Model
     public function calculateCOGS(): float
     {
         $cogs = 0;
-        
+
         foreach ($this->menuIngredients as $ingredient) {
             $inventoryItem = $ingredient->inventoryItem;
-            if ($inventoryItem && $inventoryItem->type === 'stock') {
-                $cogs += $ingredient->amount * $inventoryItem->price_per_unit;
+            if (!($inventoryItem && $inventoryItem->type === 'stock')) {
+                continue;
             }
+
+            // Estimasi menu: bahan fixed + opsi/optional yang default terpilih.
+            // (COGS aktual per pesanan dihitung dari snapshot deduction di OrderController.)
+            $role = $ingredient->role ?? 'fixed';
+            if (($role === 'option' || $role === 'optional') && !$ingredient->is_default) {
+                continue;
+            }
+
+            $cogs += $ingredient->amount * $inventoryItem->price_per_unit;
         }
-        
+
         return $cogs;
     }
 
@@ -160,23 +169,50 @@ class MenuItem extends Model
     {
         // If this item uses ingredients, calculate stock based on available inventory
         if ($this->uses_ingredients) {
-            $minStock = null;
-            
-            // We need to ensure ingredients are loaded to avoid N+1 if possible, 
+            $minStock = null;      // gate dari bahan fixed (paling membatasi)
+            $optionBest = null;    // porsi terbaik di antara opsi Tipe
+            $hasOptions = false;
+
+            // We need to ensure ingredients are loaded to avoid N+1 if possible,
             // but here we just access the relationship. Controller should handle eager loading.
             foreach ($this->menuIngredients as $ingredient) {
                 $inventoryItem = $ingredient->inventoryItem;
-                
+
                 // Only consider 'stock' type inventory (ignore equipment, etc.)
-                if ($inventoryItem && $inventoryItem->type === 'stock' && $ingredient->amount > 0) {
-                    $possible = floor($inventoryItem->current_stock / $ingredient->amount);
-                    
-                    if ($minStock === null || $possible < $minStock) {
-                        $minStock = $possible;
+                if (!($inventoryItem && $inventoryItem->type === 'stock' && $ingredient->amount > 0)) {
+                    continue;
+                }
+
+                $possible = floor($inventoryItem->current_stock / $ingredient->amount);
+                $role = $ingredient->role ?? 'fixed';
+
+                if ($role === 'optional') {
+                    // Bahan opsional tidak membatasi ketersediaan menu.
+                    continue;
+                }
+
+                if ($role === 'option') {
+                    // Grup Tipe: menu tersedia selama ada >=1 tipe berstok.
+                    $hasOptions = true;
+                    if ($optionBest === null || $possible > $optionBest) {
+                        $optionBest = $possible;
                     }
+                    continue;
+                }
+
+                // fixed
+                if ($minStock === null || $possible < $minStock) {
+                    $minStock = $possible;
                 }
             }
-            
+
+            // Gabungkan gate bahan fixed dengan gate grup Tipe (jika ada).
+            if ($hasOptions) {
+                if ($minStock === null || $optionBest < $minStock) {
+                    $minStock = $optionBest;
+                }
+            }
+
             // If ingredients are defined but none found or loaded, default to 0
             // If no ingredients are defined at all, technically stock is 0 (can't make it)
             return (float)($minStock ?? 0);

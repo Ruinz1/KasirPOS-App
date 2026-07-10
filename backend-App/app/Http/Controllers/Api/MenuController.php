@@ -66,8 +66,11 @@ class MenuController extends Controller
             'variants.*.status' => 'required|in:ready,kosong,pending',
             'variants.*.stock_deduction' => 'nullable|numeric|min:0',
             'ingredients' => 'nullable|array',
-            'ingredients.*.inventory_item_id' => 'required|exists:inventory_items,id',
-            'ingredients.*.amount' => 'required|numeric|min:0',
+            'ingredients.*.inventory_item_id' => 'nullable|exists:inventory_items,id',
+            'ingredients.*.amount' => 'nullable|numeric|min:0',
+            'ingredients.*.role' => 'nullable|in:fixed,option,optional',
+            'ingredients.*.is_default' => 'nullable|boolean',
+            'ingredients.*.label' => 'nullable|string|max:100',
             'store_id' => 'nullable|exists:stores,id',
             'parent_id' => 'nullable|exists:menu_items,id',
             'portion_value' => 'nullable|numeric|min:0.01',
@@ -104,10 +107,20 @@ class MenuController extends Controller
             // Only create ingredients if uses_ingredients is true
             if (($validated['uses_ingredients'] ?? true) && isset($validated['ingredients'])) {
                 foreach ($validated['ingredients'] as $ingredient) {
+                    // Lewati baris tak valid: tanpa inventory & tanpa label (tak ada gunanya).
+                    $hasInventory = !empty($ingredient['inventory_item_id']);
+                    $hasLabel = !empty($ingredient['label']);
+                    if (!$hasInventory && !$hasLabel) {
+                        continue;
+                    }
+
                     MenuIngredient::create([
                         'menu_item_id' => $menuItem->id,
-                        'inventory_item_id' => $ingredient['inventory_item_id'],
-                        'amount' => $ingredient['amount'],
+                        'inventory_item_id' => $ingredient['inventory_item_id'] ?? null,
+                        'amount' => $ingredient['amount'] ?? 0,
+                        'role' => $ingredient['role'] ?? 'fixed',
+                        'is_default' => array_key_exists('is_default', $ingredient) ? (bool)$ingredient['is_default'] : true,
+                        'label' => $ingredient['label'] ?? null,
                     ]);
                 }
             }
@@ -158,8 +171,11 @@ class MenuController extends Controller
             'variants.*.status' => 'required|in:ready,kosong,pending',
             'variants.*.stock_deduction' => 'nullable|numeric|min:0',
             'ingredients' => 'sometimes|array',
-            'ingredients.*.inventory_item_id' => 'required|exists:inventory_items,id',
-            'ingredients.*.amount' => 'required|numeric|min:0',
+            'ingredients.*.inventory_item_id' => 'nullable|exists:inventory_items,id',
+            'ingredients.*.amount' => 'nullable|numeric|min:0',
+            'ingredients.*.role' => 'nullable|in:fixed,option,optional',
+            'ingredients.*.is_default' => 'nullable|boolean',
+            'ingredients.*.label' => 'nullable|string|max:100',
             'parent_id' => 'nullable|exists:menu_items,id',
             'portion_value' => 'nullable|numeric|min:0.01',
         ]);
@@ -196,10 +212,20 @@ class MenuController extends Controller
                     }
                     
                     foreach ($validated['ingredients'] as $ingredient) {
+                        // Lewati baris tak valid: tanpa inventory & tanpa label.
+                        $hasInventory = !empty($ingredient['inventory_item_id']);
+                        $hasLabel = !empty($ingredient['label']);
+                        if (!$hasInventory && !$hasLabel) {
+                            continue;
+                        }
+
                         MenuIngredient::create([
                             'menu_item_id' => $menuItem->id,
-                            'inventory_item_id' => $ingredient['inventory_item_id'],
-                            'amount' => $ingredient['amount'],
+                            'inventory_item_id' => $ingredient['inventory_item_id'] ?? null,
+                            'amount' => $ingredient['amount'] ?? 0,
+                            'role' => $ingredient['role'] ?? 'fixed',
+                            'is_default' => array_key_exists('is_default', $ingredient) ? (bool)$ingredient['is_default'] : true,
+                            'label' => $ingredient['label'] ?? null,
                         ]);
                     }
                 }

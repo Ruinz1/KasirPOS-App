@@ -11,10 +11,14 @@ class MenuIngredient extends Model
         'menu_item_id',
         'inventory_item_id',
         'amount',
+        'role',
+        'is_default',
+        'label',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
+        'is_default' => 'boolean',
     ];
 
     /**

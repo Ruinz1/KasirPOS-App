@@ -16,6 +16,7 @@ class OrderItem extends Model
         'is_takeaway',
         'is_addon',
         'variant_stock_deduction',
+        'ingredient_deductions',
     ];
 
     protected $casts = [
@@ -23,6 +24,7 @@ class OrderItem extends Model
         'is_takeaway' => 'boolean',
         'is_addon' => 'boolean',
         'variant_stock_deduction' => 'float',
+        'ingredient_deductions' => 'array',
     ];
 
     /**

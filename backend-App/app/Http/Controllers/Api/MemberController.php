@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Member;
 use App\Models\Order;
+use App\Services\WhatsAppNotifier;
 use Illuminate\Http\Request;
 
 class MemberController extends Controller
@@ -107,6 +108,9 @@ class MemberController extends Controller
             'name' => $validated['name'],
             'phone' => $validated['phone'],
         ]);
+
+        $storeName = $request->user()->store->name ?? 'toko kami';
+        WhatsAppNotifier::sendTemplate($member->phone, 'member_welcome', [$member->name, $storeName]);
 
         return response()->json($member, 201);
     }

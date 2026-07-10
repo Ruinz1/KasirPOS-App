@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { formatCurrency } from '@/utils/calculations';
+import { storageUrl } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import {
   TrendingUp,
@@ -1015,7 +1016,7 @@ export default function ReportsPage() {
 
   return (
     <MainLayout>
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
             <div className="flex items-center gap-3">
@@ -1028,7 +1029,7 @@ export default function ReportsPage() {
               {isKaryawan() ? 'Lihat laporan penjualan Anda' : 'Monitor performa penjualan tim'}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 w-full md:w-auto">
             <button
               onClick={() => setShowInitialCashDialog(true)}
               className="btn-primary flex items-center gap-2"
@@ -1948,8 +1949,8 @@ export default function ReportsPage() {
 
         {/* Sales Chart */}
         {stats && (
-          <div className="card-elevated p-6 mb-8">
-            <div className="flex items-center justify-between mb-6">
+          <div className="card-elevated p-4 md:p-6 mb-8">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-primary" />
                 <h3 className="font-display font-semibold text-lg">Grafik Penjualan</h3>
@@ -2642,7 +2643,7 @@ export default function ReportsPage() {
                     <div className="flex justify-center mb-1">
                       {selectedOrder?.store?.image ? (
                         <img
-                          src={`${import.meta.env.VITE_API_URL || ''}/storage/${selectedOrder.store.image}`}
+                          src={storageUrl(selectedOrder.store.image)}
                           alt="Store Logo"
                           className="w-12 h-12 object-cover rounded-full"
                         />
@@ -2857,7 +2858,7 @@ export default function ReportsPage() {
                     <h4 className="font-semibold mb-3">Bukti yang Sudah Diupload ({selectedProofOrder.payment_proof.length})</h4>
                     <div className="grid grid-cols-2 gap-3">
                       {selectedProofOrder.payment_proof.map((proof: string, index: number) => {
-                        const imageUrl = `${import.meta.env.VITE_API_URL || ''}/storage/${proof}`;
+                        const imageUrl = storageUrl(proof);
                         console.log('Image URL:', imageUrl);
                         return (
                           <div key={index} className="relative group">
@@ -2986,7 +2987,7 @@ export default function ReportsPage() {
                 <div className="flex justify-center mb-1">
                   {selectedOrder.store?.image ? (
                     <img
-                      src={`${import.meta.env.VITE_API_URL || ''}/storage/${selectedOrder.store.image}`}
+                      src={storageUrl(selectedOrder.store.image)}
                       alt="Store Logo"
                       className="w-12 h-12 object-cover rounded-full"
                     />

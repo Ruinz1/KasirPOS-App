@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\MenuItem;
+use App\Models\InventoryItem;
 use App\Models\Member;
+use App\Services\WhatsAppNotifier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -54,6 +56,188 @@ class OrderController extends Controller
     }
 
     /**
+     * Tentukan bahan yang benar-benar dipotong untuk sebuah item pesanan
+     * berdasarkan pilihan Tipe (selected_type_id) & bahan opsional yang dihilangkan
+     * (removed_ingredient_ids). Mengembalikan daftar per-unit [{inventory_item_id, amount}].
+     *
+     * selected_type_id & removed_ingredient_ids memakai id baris menu_ingredient
+     * (bukan inventory_item_id) agar item custom tanpa stok pun bisa dipilih/dihilangkan.
+     *
+     * Aturan peran (dikunci per id menu_ingredient):
+     *  - fixed    : selalu masuk.
+     *  - option   : masuk hanya jika id == selected_type_id
+     *               (fallback ke opsi is_default bila kasir tak mengirim pilihan).
+     *  - optional : masuk kecuali id ada di removed_ingredient_ids.
+     * Item tanpa inventory (custom) tak memotong stok — hanya info dapur/antrian.
+     */
+    private function resolveItemDeductions(MenuItem $menuItem, array $item): array
+    {
+        $deductions = [];
+        if (!$menuItem->uses_ingredients) {
+            return $deductions;
+        }
+
+        $selectedTypeId = isset($item['selected_type_id']) && $item['selected_type_id'] !== null
+            ? (int)$item['selected_type_id']
+            : null;
+        $removed = array_map('intval', $item['removed_ingredient_ids'] ?? []);
+        $note = (string)($item['note'] ?? '');
+
+        // Fallback dari catatan "Tipe: X" bila id eksplisit tak dikirim
+        // (mis. dari dialog edit antrian yang hanya mengirim note).
+        if ($selectedTypeId === null && $note !== '' && preg_match('/Tipe:\s*([^.]+)/i', $note, $m)) {
+            $typeName = mb_strtolower(trim($m[1]));
+            foreach ($menuItem->menuIngredients as $ing) {
+                if (($ing->role ?? 'fixed') === 'option') {
+                    $name = $ing->label ?: optional($ing->inventoryItem)->name;
+                    if ($name !== null && mb_strtolower(trim($name)) === $typeName) {
+                        $selectedTypeId = (int)$ing->id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Fallback dari catatan "Tanpa: A, B" bila daftar dihilangkan tak dikirim.
+        if (empty($removed) && $note !== '' && preg_match('/Tanpa:\s*([^.]+)/i', $note, $m2)) {
+            $removedNames = array_map(fn($s) => mb_strtolower(trim($s)), explode(',', $m2[1]));
+            foreach ($menuItem->menuIngredients as $ing) {
+                if (($ing->role ?? 'fixed') === 'optional') {
+                    $name = $ing->label ?: optional($ing->inventoryItem)->name;
+                    if ($name !== null && in_array(mb_strtolower(trim($name)), $removedNames, true)) {
+                        $removed[] = (int)$ing->id;
+                    }
+                }
+            }
+        }
+
+        // Fallback tipe default bila tetap tak diketahui.
+        if ($selectedTypeId === null) {
+            foreach ($menuItem->menuIngredients as $ing) {
+                if (($ing->role ?? 'fixed') === 'option' && $ing->is_default) {
+                    $selectedTypeId = (int)$ing->id;
+                    break;
+                }
+            }
+            if ($selectedTypeId === null) {
+                foreach ($menuItem->menuIngredients as $ing) {
+                    if (($ing->role ?? 'fixed') === 'option') {
+                        $selectedTypeId = (int)$ing->id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        foreach ($menuItem->menuIngredients as $ing) {
+            $role = $ing->role ?? 'fixed';
+            $rowId = (int)$ing->id;
+
+            if ($role === 'option' && $rowId !== $selectedTypeId) {
+                continue; // hanya tipe terpilih
+            }
+            if ($role === 'optional' && in_array($rowId, $removed, true)) {
+                continue; // dihilangkan oleh kasir
+            }
+
+            // Item custom (tanpa inventory) tak memotong stok.
+            $inventoryItem = $ing->inventoryItem;
+            if (!($inventoryItem && $inventoryItem->type === 'stock')) {
+                continue;
+            }
+
+            $deductions[] = [
+                'inventory_item_id' => (int)$ing->inventory_item_id,
+                'amount' => (float)$ing->amount,
+            ];
+        }
+
+        return $deductions;
+    }
+
+    /**
+     * Cek ketersediaan lalu potong stok bahan untuk item pesanan yang pakai bahan.
+     * Mengembalikan ['deductions' => [...per-unit...], 'cogs' => cogsPerUnit].
+     * Melempar exception bila stok kurang.
+     */
+    private function applyIngredientDeductions(MenuItem $menuItem, array $item): array
+    {
+        $quantity = (int)$item['quantity'];
+        $deductions = $this->resolveItemDeductions($menuItem, $item);
+
+        // Cek semua ketersediaan dulu sebelum memotong.
+        foreach ($deductions as $d) {
+            $ing = $menuItem->menuIngredients->firstWhere('inventory_item_id', $d['inventory_item_id']);
+            $inventoryItem = $ing ? $ing->inventoryItem : null;
+            if ($inventoryItem && $inventoryItem->current_stock < ($d['amount'] * $quantity)) {
+                throw new \Exception("Insufficient stock for {$inventoryItem->name}");
+            }
+        }
+
+        // Potong stok & hitung COGS aktual.
+        $cogsPerUnit = 0;
+        foreach ($deductions as $d) {
+            $ing = $menuItem->menuIngredients->firstWhere('inventory_item_id', $d['inventory_item_id']);
+            $inventoryItem = $ing ? $ing->inventoryItem : null;
+            if (!$inventoryItem) {
+                continue;
+            }
+            $inventoryItem->current_stock -= ($d['amount'] * $quantity);
+            $inventoryItem->save();
+            $cogsPerUnit += $d['amount'] * (float)$inventoryItem->price_per_unit;
+        }
+
+        return ['deductions' => $deductions, 'cogs' => $cogsPerUnit];
+    }
+
+    /**
+     * Kembalikan stok dari sebuah OrderItem saat pesanan diedit/dihapus.
+     * Pakai snapshot ingredient_deductions bila ada; jika tidak (data lama),
+     * fallback ke semua menuIngredients (perilaku lama).
+     */
+    private function restoreOrderItemStock(OrderItem $orderItem): void
+    {
+        $menuItem = $orderItem->menuItem;
+        if (!$menuItem) {
+            return;
+        }
+        $quantity = (int)$orderItem->quantity;
+
+        // Menu berbasis stok menu-level (bukan bahan)
+        if (!$menuItem->uses_ingredients) {
+            $stockItem = $menuItem->parent ?: $menuItem;
+            $perUnit = $menuItem->parent
+                ? $menuItem->portion_value
+                : ((float)$orderItem->variant_stock_deduction ?: 1);
+            $stockItem->stock += $quantity * $perUnit;
+            $stockItem->save();
+            return;
+        }
+
+        // Menu berbasis bahan: pakai snapshot bila tersedia.
+        $snapshot = $orderItem->ingredient_deductions;
+        if (is_array($snapshot) && count($snapshot) > 0) {
+            foreach ($snapshot as $d) {
+                $inventoryItem = InventoryItem::find($d['inventory_item_id'] ?? null);
+                if ($inventoryItem && $inventoryItem->type === 'stock') {
+                    $inventoryItem->current_stock += ((float)($d['amount'] ?? 0) * $quantity);
+                    $inventoryItem->save();
+                }
+            }
+            return;
+        }
+
+        // Fallback data lama: kembalikan semua bahan.
+        foreach ($menuItem->menuIngredients as $ingredient) {
+            $inventoryItem = $ingredient->inventoryItem;
+            if ($inventoryItem && $inventoryItem->type === 'stock') {
+                $inventoryItem->current_stock += ($ingredient->amount * $quantity);
+                $inventoryItem->save();
+            }
+        }
+    }
+
+    /**
      * Store a newly created order
      */
     public function store(Request $request)
@@ -74,6 +258,9 @@ class OrderController extends Controller
             'items.*.is_takeaway' => 'boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
             'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
+            'items.*.selected_type_id' => 'nullable|integer|exists:menu_ingredients,id',
+            'items.*.removed_ingredient_ids' => 'nullable|array',
+            'items.*.removed_ingredient_ids.*' => 'integer',
             'store_id' => 'nullable|exists:stores,id',
         ]);
         
@@ -146,26 +333,19 @@ class OrderController extends Controller
                     : 1.0;
                 $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : $variantStockDeduction);
                 
-                // Check stock availability
+                // Check stock availability (menu-level stock)
                 if (!$menuItem->uses_ingredients && $stockItem->stock < $deductionAmount) {
                     throw new \Exception("Insufficient stock for {$menuItem->name} (Available: " . (float)$stockItem->stock . ")");
                 }
 
-                foreach ($menuItem->menuIngredients as $ingredient) {
-                    $inventoryItem = $ingredient->inventoryItem;
-                    if ($inventoryItem && $inventoryItem->type === 'stock') {
-                        $requiredAmount = $ingredient->amount * $item['quantity'];
-                        if ($inventoryItem->current_stock < $requiredAmount) {
-                            throw new \Exception("Insufficient stock for {$inventoryItem->name}");
-                        }
-                    }
-                }
+                // Cek & potong stok bahan sesuai pilihan Tipe / bahan opsional.
+                $ingredientResult = $this->applyIngredientDeductions($menuItem, $item);
 
                 // Create order item with discounted price + additional price (variants)
                 $discountedPrice = $menuItem->getDiscountedPrice();
                 $additionalPrice = isset($item['additional_price']) ? (float)$item['additional_price'] : 0;
                 $finalPrice = $discountedPrice + $additionalPrice;
-                
+
                 OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $menuItem->id,
@@ -174,25 +354,18 @@ class OrderController extends Controller
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
                     'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
+                    'ingredient_deductions' => $menuItem->uses_ingredients ? $ingredientResult['deductions'] : null,
                 ]);
 
-                // Reduce stock
+                // Reduce menu-level stock (non-ingredient menus)
                 if (!$menuItem->uses_ingredients) {
                     $stockItem->stock -= $deductionAmount;
                     $stockItem->save();
                 }
 
-                foreach ($menuItem->menuIngredients as $ingredient) {
-                    $inventoryItem = $ingredient->inventoryItem;
-                    if ($inventoryItem && $inventoryItem->type === 'stock') {
-                        $inventoryItem->current_stock -= ($ingredient->amount * $item['quantity']);
-                        $inventoryItem->save();
-                    }
-                }
-
                 // Calculate totals using discounted price
                 $itemTotal = $finalPrice * $item['quantity'];
-                $itemCogs = $menuItem->calculateCOGS() * $item['quantity'];
+                $itemCogs = ($menuItem->uses_ingredients ? $ingredientResult['cogs'] : $menuItem->calculateCOGS()) * $item['quantity'];
                 
                 $total += $itemTotal;
                 $cogs += $itemCogs;
@@ -247,6 +420,15 @@ class OrderController extends Controller
             }
 
             DB::commit();
+
+            if ($member && $order->payment_status === 'paid' && $order->points_earned > 0) {
+                WhatsAppNotifier::sendTemplate($member->phone, 'points_earned', [
+                    $member->name,
+                    number_format($order->total, 0, ',', '.'),
+                    $order->points_earned,
+                    $member->total_points,
+                ]);
+            }
 
             $order->load(['items.menuItem', 'user', 'member']);
             return response()->json($order, 201);
@@ -371,6 +553,13 @@ class OrderController extends Controller
                     $member->addPoints($pointsEarned, $order->id, "Belanja Rp " . number_format($order->total, 0, ',', '.') . " - Order #{$order->daily_number}");
                     $order->points_earned = $pointsEarned;
                     $order->save();
+
+                    WhatsAppNotifier::sendTemplate($member->phone, 'points_earned', [
+                        $member->name,
+                        number_format($order->total, 0, ',', '.'),
+                        $pointsEarned,
+                        $member->total_points,
+                    ]);
                 }
             }
         }
@@ -397,33 +586,19 @@ class OrderController extends Controller
             'items.*.is_takeaway' => 'boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
             'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
+            'items.*.selected_type_id' => 'nullable|integer|exists:menu_ingredients,id',
+            'items.*.removed_ingredient_ids' => 'nullable|array',
+            'items.*.removed_ingredient_ids.*' => 'integer',
             'customer_name' => 'nullable|string',
             'order_type' => 'required|in:dine_in,takeaway',
         ]);
 
         DB::beginTransaction();
         try {
-            // Restore inventory stock from OLD items
+            // Restore inventory stock from OLD items (pakai snapshot bila ada)
             $order->load('items.menuItem.menuIngredients.inventoryItem', 'items.menuItem.parent');
             foreach ($order->items as $orderItem) {
-                $menuItem = $orderItem->menuItem;
-                if ($menuItem && !$menuItem->uses_ingredients) {
-                     $stockItem = $menuItem->parent ?: $menuItem;
-                     $restoreAmount = $orderItem->quantity * ($menuItem->parent ? $menuItem->portion_value : 1);
-                     
-                     $stockItem->stock += $restoreAmount;
-                     $stockItem->save();
-                }
-
-                if ($menuItem && $menuItem->menuIngredients) {
-                    foreach ($menuItem->menuIngredients as $ingredient) {
-                        $inventoryItem = $ingredient->inventoryItem;
-                        if ($inventoryItem && $inventoryItem->type === 'stock') {
-                            $inventoryItem->current_stock += ($ingredient->amount * $orderItem->quantity); // Restore
-                            $inventoryItem->save();
-                        }
-                    }
-                }
+                $this->restoreOrderItemStock($orderItem);
             }
 
             // Delete old items
@@ -443,25 +618,18 @@ class OrderController extends Controller
                     : 1.0;
                 $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : $variantStockDeduction);
                 
-                // Check stock availability
+                // Check stock availability (menu-level stock)
                 if (!$menuItem->uses_ingredients && $stockItem->stock < $deductionAmount) {
                     throw new \Exception("Insufficient stock for {$menuItem->name} (Available: " . (float)$stockItem->stock . ")");
                 }
 
-                foreach ($menuItem->menuIngredients as $ingredient) {
-                    $inventoryItem = $ingredient->inventoryItem;
-                    if ($inventoryItem && $inventoryItem->type === 'stock') {
-                        $requiredAmount = $ingredient->amount * $item['quantity'];
-                        if ($inventoryItem->current_stock < $requiredAmount) {
-                            throw new \Exception("Insufficient stock for {$inventoryItem->name}");
-                        }
-                    }
-                }
+                // Cek & potong stok bahan sesuai pilihan Tipe / bahan opsional.
+                $ingredientResult = $this->applyIngredientDeductions($menuItem, $item);
 
                 $discountedPrice = $menuItem->getDiscountedPrice();
                 $additionalPrice = isset($item['additional_price']) ? (float)$item['additional_price'] : 0;
                 $finalPrice = $discountedPrice + $additionalPrice;
-                
+
                 OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $menuItem->id,
@@ -470,24 +638,17 @@ class OrderController extends Controller
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
                     'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
+                    'ingredient_deductions' => $menuItem->uses_ingredients ? $ingredientResult['deductions'] : null,
                 ]);
 
-                // Reduce stock
+                // Reduce menu-level stock (non-ingredient menus)
                 if (!$menuItem->uses_ingredients) {
                     $stockItem->stock -= $deductionAmount;
                     $stockItem->save();
                 }
 
-                foreach ($menuItem->menuIngredients as $ingredient) {
-                    $inventoryItem = $ingredient->inventoryItem;
-                    if ($inventoryItem && $inventoryItem->type === 'stock') {
-                        $inventoryItem->current_stock -= ($ingredient->amount * $item['quantity']);
-                        $inventoryItem->save();
-                    }
-                }
-
                 $total += $finalPrice * $item['quantity'];
-                $cogs += $menuItem->calculateCOGS() * $item['quantity'];
+                $cogs += ($menuItem->uses_ingredients ? $ingredientResult['cogs'] : $menuItem->calculateCOGS()) * $item['quantity'];
             }
 
             // Update order details
@@ -545,6 +706,9 @@ class OrderController extends Controller
             'items.*.is_takeaway' => 'boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
             'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
+            'items.*.selected_type_id' => 'nullable|integer|exists:menu_ingredients,id',
+            'items.*.removed_ingredient_ids' => 'nullable|array',
+            'items.*.removed_ingredient_ids.*' => 'integer',
         ]);
 
         DB::beginTransaction();
@@ -563,25 +727,18 @@ class OrderController extends Controller
                     : 1.0;
                 $deductionAmount = $item['quantity'] * ($menuItem->parent ? $menuItem->portion_value : $variantStockDeductionAddon);
                 
-                // Check stock availability
+                // Check stock availability (menu-level stock)
                 if (!$menuItem->uses_ingredients && $stockItem->stock < $deductionAmount) {
                     throw new \Exception("Insufficient stock for {$menuItem->name} (Available: " . (float)$stockItem->stock . ")");
                 }
 
-                foreach ($menuItem->menuIngredients as $ingredient) {
-                    $inventoryItem = $ingredient->inventoryItem;
-                    if ($inventoryItem && $inventoryItem->type === 'stock') {
-                        $requiredAmount = $ingredient->amount * $item['quantity'];
-                        if ($inventoryItem->current_stock < $requiredAmount) {
-                            throw new \Exception("Insufficient stock for {$inventoryItem->name}");
-                        }
-                    }
-                }
+                // Cek & potong stok bahan sesuai pilihan Tipe / bahan opsional.
+                $ingredientResult = $this->applyIngredientDeductions($menuItem, $item);
 
                 $discountedPrice = $menuItem->getDiscountedPrice();
                 $additionalPrice = isset($item['additional_price']) ? (float)$item['additional_price'] : 0;
                 $finalPrice = $discountedPrice + $additionalPrice;
-                
+
                 $orderItem = OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $menuItem->id,
@@ -591,24 +748,17 @@ class OrderController extends Controller
                     'is_takeaway' => $item['is_takeaway'] ?? false,
                     'is_addon' => true, // Mark as add-on
                     'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
+                    'ingredient_deductions' => $menuItem->uses_ingredients ? $ingredientResult['deductions'] : null,
                 ]);
 
-                // Reduce stock
+                // Reduce menu-level stock (non-ingredient menus)
                 if (!$menuItem->uses_ingredients) {
                     $stockItem->stock -= $deductionAmount;
                     $stockItem->save();
                 }
 
-                foreach ($menuItem->menuIngredients as $ingredient) {
-                    $inventoryItem = $ingredient->inventoryItem;
-                    if ($inventoryItem && $inventoryItem->type === 'stock') {
-                        $inventoryItem->current_stock -= ($ingredient->amount * $item['quantity']);
-                        $inventoryItem->save();
-                    }
-                }
-
                 $total += $finalPrice * $item['quantity'];
-                $cogs += $menuItem->calculateCOGS() * $item['quantity'];
+                $cogs += ($menuItem->uses_ingredients ? $ingredientResult['cogs'] : $menuItem->calculateCOGS()) * $item['quantity'];
                 
                 $orderItem->load('menuItem');
                 $addedItems[] = $orderItem;
@@ -739,31 +889,11 @@ class OrderController extends Controller
 
         DB::beginTransaction();
         try {
-            // Restore inventory stock
+            // Restore inventory stock (pakai snapshot bila ada)
             $order->load(['items.menuItem.menuIngredients.inventoryItem', 'items.menuItem.parent']);
-            
-            foreach ($order->items as $orderItem) {
-                $menuItem = $orderItem->menuItem;
-                
-                if ($menuItem && !$menuItem->uses_ingredients) {
-                     $stockItem = $menuItem->parent ?: $menuItem;
-                     $restoreAmount = $orderItem->quantity * ($menuItem->parent ? $menuItem->portion_value : 1);
-                     
-                     $stockItem->stock += $restoreAmount;
-                     $stockItem->save();
-                }
 
-                if ($menuItem && $menuItem->menuIngredients) {
-                    foreach ($menuItem->menuIngredients as $ingredient) {
-                        $inventoryItem = $ingredient->inventoryItem;
-                        
-                        if ($inventoryItem && $inventoryItem->type === 'stock') {
-                            // Restore the stock
-                            $inventoryItem->current_stock += ($ingredient->amount * $orderItem->quantity);
-                            $inventoryItem->save();
-                        }
-                    }
-                }
+            foreach ($order->items as $orderItem) {
+                $this->restoreOrderItemStock($orderItem);
             }
 
             // Update order status to cancelled

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
+import { storageUrl } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,7 +60,7 @@ export default function StorePage() {
         if (store) {
             setFormData({ name: store.name, location: store.location || '' });
             if (store.image) {
-                setPreviewUrl(`${import.meta.env.VITE_API_URL || ''}/storage/${store.image}`);
+                setPreviewUrl(storageUrl(store.image));
             }
         }
     }, [store]);

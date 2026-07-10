@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import api from '@/lib/api';
-import { compressImageToWebp } from '@/lib/utils';
+import { compressImageToWebp, storageUrl } from '@/lib/utils';
 
 const MySwal = withReactContent(Swal);
 import { MainLayout } from "@/components/layout/MainLayout";
@@ -936,7 +936,7 @@ const DailyShoppingPage = () => {
                                             {(receiptImage || editingItem.image_path) && (
                                                 <div className="mt-2">
                                                     <img 
-                                                        src={receiptImage || `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/storage/${editingItem.image_path}`} 
+                                                        src={receiptImage || storageUrl(editingItem.image_path)}
                                                         alt="Preview Struk" 
                                                         className="h-32 object-contain rounded border" 
                                                     />
@@ -1089,7 +1089,7 @@ const DailyShoppingPage = () => {
                                                         <Button
                                                             variant="secondary"
                                                             size="sm"
-                                                            onClick={() => setViewImage(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/storage/${item.image_path}`)}
+                                                            onClick={() => setViewImage(storageUrl(item.image_path))}
                                                             className="mb-2"
                                                         >
                                                             Lihat Foto

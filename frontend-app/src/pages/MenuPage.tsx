@@ -32,9 +32,14 @@ interface InventoryItem {
   current_stock?: number;
 }
 
+type IngredientRole = 'fixed' | 'option' | 'optional';
+
 interface Ingredient {
   inventory_item_id: number;
   amount: number;
+  role?: IngredientRole;      // fixed = selalu dipotong; option = grup Tipe (pilih satu); optional = checkbox di keranjang
+  is_default?: boolean;       // option: tipe terpilih awal; optional: tercentang awal
+  label?: string;             // nama tampil untuk kasir (mis. "Halus", "Mie Kuning")
   inventory_item?: InventoryItem;
 }
 
@@ -56,6 +61,9 @@ interface MenuItem {
   menu_ingredients?: Array<{
     inventory_item?: InventoryItem;
     amount: number;
+    role?: IngredientRole;
+    is_default?: boolean;
+    label?: string;
   }>;
   variants?: Array<{
     name: string;
@@ -111,6 +119,7 @@ export default function MenuPage() {
 
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [newIngredient, setNewIngredient] = useState({ inventory_item_id: 0, amount: '' });
+  const [newCustom, setNewCustom] = useState({ label: '', role: 'optional' as IngredientRole });
   const [menuVariants, setMenuVariants] = useState<Array<{ name: string; price: number; status: 'ready' | 'kosong' | 'pending'; stock_deduction: number }>>([]);
   const [newVariant, setNewVariant] = useState({ name: '', price: '', status: 'ready' as 'ready' | 'kosong' | 'pending', stock_deduction: '1' });
 
@@ -183,14 +192,55 @@ export default function MenuPage() {
     if (newIngredient.inventory_item_id && newIngredient.amount) {
       setIngredients([...ingredients, {
         inventory_item_id: newIngredient.inventory_item_id,
-        amount: parseFloat(newIngredient.amount)
+        amount: parseFloat(newIngredient.amount),
+        role: 'fixed',
+        is_default: true,
+        label: '',
       }]);
       setNewIngredient({ inventory_item_id: 0, amount: '' });
     }
   };
 
+  // Tambah opsi custom TANPA stok (tanpa inventory) — mis. "Mie", "Bihun".
+  const handleAddCustom = () => {
+    const label = newCustom.label.trim();
+    if (!label) return;
+    setIngredients([...ingredients, {
+      inventory_item_id: 0,   // 0 = custom (dikirim null ke server)
+      amount: 0,
+      role: newCustom.role,
+      is_default: true,
+      label,
+    }]);
+    setNewCustom({ label: '', role: 'optional' });
+  };
+
   const handleRemoveIngredient = (index: number) => {
     setIngredients(ingredients.filter((_, i) => i !== index));
+  };
+
+  // Ubah peran bahan. Jika jadikan 'option' & belum ada default di grup, jadikan default.
+  const handleIngredientRoleChange = (index: number, role: IngredientRole) => {
+    setIngredients(prev => {
+      const next = prev.map((ing, i) => i === index ? { ...ing, role } : ing);
+      if (role === 'option') {
+        const hasDefault = next.some((ing, i) => i !== index && ing.role === 'option' && ing.is_default);
+        next[index] = { ...next[index], is_default: !hasDefault };
+      }
+      return next;
+    });
+  };
+
+  // Set satu opsi Tipe sebagai default (radio: hanya satu default per grup option).
+  const handleSetDefaultOption = (index: number) => {
+    setIngredients(prev => prev.map((ing, i) => {
+      if (ing.role !== 'option') return ing;
+      return { ...ing, is_default: i === index };
+    }));
+  };
+
+  const handleIngredientLabelChange = (index: number, label: string) => {
+    setIngredients(prev => prev.map((ing, i) => i === index ? { ...ing, label } : ing));
   };
 
   const handleSubmit = async () => {
@@ -218,7 +268,11 @@ export default function MenuPage() {
           toast.error("Harap tambahkan minimal satu bahan baku");
           return;
         }
-        payload.ingredients = ingredients;
+        payload.ingredients = ingredients.map(ing => ({
+          ...ing,
+          inventory_item_id: ing.inventory_item_id || null, // 0 = custom → null
+          amount: ing.amount || 0,
+        }));
       }
 
       if (isAdmin()) {
@@ -260,10 +314,14 @@ export default function MenuPage() {
     });
 
     const formattedIngredients = item.menu_ingredients
-      ?.filter(ing => ing.inventory_item && ing.inventory_item.id)
+      // Simpan bahan berstok (punya inventory) ATAU opsi custom (punya label).
+      ?.filter(ing => (ing.inventory_item && ing.inventory_item.id) || ing.label)
       .map(ing => ({
-        inventory_item_id: ing.inventory_item!.id,
+        inventory_item_id: ing.inventory_item?.id ?? 0, // 0 = custom
         amount: ing.amount,
+        role: (ing.role ?? 'fixed') as IngredientRole,
+        is_default: ing.is_default ?? true,
+        label: ing.label ?? '',
       })) || [];
 
     setIngredients(formattedIngredients);
@@ -301,6 +359,7 @@ export default function MenuPage() {
     });
     setIngredients([]);
     setNewIngredient({ inventory_item_id: 0, amount: '' });
+    setNewCustom({ label: '', role: 'optional' });
     setMenuVariants([]);
     setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1' });
     setEditingItem(null);
@@ -587,24 +646,80 @@ export default function MenuPage() {
                           <Label>Resep & Bahan</Label>
                         </div>
 
+                        <p className="text-xs text-muted-foreground -mt-1">
+                          Atur peran tiap bahan: <strong>Tetap</strong> (selalu dipotong),{' '}
+                          <strong>Tipe</strong> (kasir pilih satu, mis. Halus/Urat/Tenis), atau{' '}
+                          <strong>Opsional</strong> (checkbox di keranjang, default aktif, mis. Mie/Bihun).
+                        </p>
+
                         {ingredients.length > 0 && (
                           <div className="space-y-2 mb-4">
-                            {ingredients.map((ing, idx) => (
-                              <div key={idx} className="flex items-center gap-2 p-3 bg-secondary rounded-lg">
-                                <span className="flex-1 font-medium">
-                                  {inventoryItems.find(i => i.id === ing.inventory_item_id)?.name || 'Unknown'}
-                                </span>
-                                <span className="text-muted-foreground">
-                                  {ing.amount} {inventoryItems.find(i => i.id === ing.inventory_item_id)?.unit || ''}
-                                </span>
-                                <button
-                                  className="p-1 hover:bg-destructive/10 rounded"
-                                  onClick={() => handleRemoveIngredient(idx)}
-                                >
-                                  <Trash2 className="w-4 h-4 text-destructive" />
-                                </button>
-                              </div>
-                            ))}
+                            {ingredients.map((ing, idx) => {
+                              const role = ing.role ?? 'fixed';
+                              const inv = inventoryItems.find(i => i.id === ing.inventory_item_id);
+                              const isCustom = !ing.inventory_item_id;
+                              return (
+                                <div key={idx} className="p-3 bg-secondary rounded-lg space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="flex-1 font-medium">
+                                      {inv?.name || ing.label || 'Custom'}
+                                      {isCustom && (
+                                        <span className="ml-2 text-[10px] font-normal px-1.5 py-0.5 rounded bg-muted text-muted-foreground align-middle">
+                                          tanpa stok
+                                        </span>
+                                      )}
+                                    </span>
+                                    {!isCustom && (
+                                      <span className="text-muted-foreground text-sm">
+                                        {ing.amount} {inv?.unit || ''}
+                                      </span>
+                                    )}
+                                    <button
+                                      className="p-1 hover:bg-destructive/10 rounded"
+                                      onClick={() => handleRemoveIngredient(idx)}
+                                    >
+                                      <Trash2 className="w-4 h-4 text-destructive" />
+                                    </button>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Select
+                                      value={role}
+                                      onValueChange={(v) => handleIngredientRoleChange(idx, v as IngredientRole)}
+                                    >
+                                      <SelectTrigger className="h-8 w-32 text-xs bg-background">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {!isCustom && <SelectItem value="fixed" className="text-xs">Tetap</SelectItem>}
+                                        <SelectItem value="option" className="text-xs">Tipe (pilih satu)</SelectItem>
+                                        <SelectItem value="optional" className="text-xs">Opsional (checkbox)</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+
+                                    {role === 'option' && (
+                                      <Button
+                                        type="button"
+                                        variant={ing.is_default ? 'default' : 'outline'}
+                                        size="sm"
+                                        className="h-8 text-xs"
+                                        onClick={() => handleSetDefaultOption(idx)}
+                                      >
+                                        {ing.is_default ? '★ Tipe default' : 'Jadikan default'}
+                                      </Button>
+                                    )}
+
+                                    {(role === 'option' || role === 'optional') && (
+                                      <Input
+                                        className="h-8 w-32 text-xs bg-background"
+                                        placeholder="Nama tampil"
+                                        value={ing.label ?? ''}
+                                        onChange={(e) => handleIngredientLabelChange(idx, e.target.value)}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
 
@@ -634,6 +749,37 @@ export default function MenuPage() {
                           <Button variant="outline" onClick={handleAddIngredient}>
                             <Plus className="w-4 h-4" />
                           </Button>
+                        </div>
+
+                        {/* Tambah opsi TANPA stok (mis. Mie, Bihun) */}
+                        <div className="pt-2 border-t border-border/60 space-y-1.5">
+                          <p className="text-xs text-muted-foreground">
+                            Atau tambah opsi <strong>tanpa stok</strong> (hanya info dapur, tak memotong bahan baku):
+                          </p>
+                          <div className="flex gap-2">
+                            <Input
+                              className="flex-1 input-coffee"
+                              placeholder="Nama opsi (mis. Mie, Bihun)"
+                              value={newCustom.label}
+                              onChange={(e) => setNewCustom({ ...newCustom, label: e.target.value })}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustom(); } }}
+                            />
+                            <Select
+                              value={newCustom.role}
+                              onValueChange={(v) => setNewCustom({ ...newCustom, role: v as IngredientRole })}
+                            >
+                              <SelectTrigger className="w-36 input-coffee">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="optional">Opsional</SelectItem>
+                                <SelectItem value="option">Tipe</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Button variant="outline" onClick={handleAddCustom}>
+                              <Plus className="w-4 h-4" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     )}

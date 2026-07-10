@@ -29,10 +29,13 @@ import {
   GlassWater,
   Clock,
   Star,
-  Gift
+  Gift,
+  Menu as MenuIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { storageUrl } from '@/lib/utils';
 import { useState, useEffect } from 'react';
 
 const allMenuItems = [
@@ -59,20 +62,8 @@ const allMenuItems = [
   { icon: Shield, label: 'Role & Izin', path: '/roles', permission: 'manage_roles_fallback' },
 ];
 
-export function Sidebar() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const { user, hasPermission, canEdit } = useAuth();
-  const [isCollapsed, setIsCollapsed] = useState(() => {
-    const saved = localStorage.getItem('sidebarCollapsed');
-    return saved ? JSON.parse(saved) : false;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('sidebarCollapsed', JSON.stringify(isCollapsed));
-  }, [isCollapsed]);
-
+function useStoreInfo() {
+  const { user } = useAuth();
   const { data: storeData } = useQuery({
     queryKey: ['store'],
     queryFn: async () => {
@@ -83,39 +74,24 @@ export function Sidebar() {
     staleTime: 1000 * 60 * 5, // Cache for 5 minutes
     retry: false
   });
+  return storeData;
+}
 
-  const storeName = storeData?.name || 'KedaiPOS';
-  const storeLocation = storeData?.location || '';
-
-  // Filter menu items based on user permission
-  const menuItems = allMenuItems.filter(item => {
+function useVisibleMenuItems() {
+  const { user, hasPermission } = useAuth();
+  return allMenuItems.filter(item => {
     if (!user) return false;
 
     // Special handling for Roles page (Admin only)
-    if (item.path === '/roles') {
-      return user.role === 'admin';
-    }
-
+    if (item.path === '/roles') return user.role === 'admin';
     // Special handling for Users page (Admin only)
-    if (item.path === '/users') {
-      return user.role === 'admin';
-    }
-
+    if (item.path === '/users') return user.role === 'admin';
     // Special handling for Stores Management (Admin only)
-    if (item.path === '/stores-management') {
-      return user.role === 'admin';
-    }
-
+    if (item.path === '/stores-management') return user.role === 'admin';
     // Special handling for Store Profile (Owner only)
-    if (item.path === '/store') {
-      return user.role === 'owner';
-    }
-
+    if (item.path === '/store') return user.role === 'owner';
     // Special handling for Leaves (All users)
-    if (item.path === '/leaves') {
-      return true;
-    }
-
+    if (item.path === '/leaves') return true;
     // Member & Reward Poin visible to admin, owner, and karyawan with manage_orders
     if (item.path === '/members' || item.path === '/point-rewards') {
       return user.role === 'admin' || hasPermission('manage_orders');
@@ -123,6 +99,24 @@ export function Sidebar() {
 
     return hasPermission(item.permission);
   });
+}
+
+interface SidebarInnerProps {
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}
+
+/** Shared sidebar body used by both the desktop panel and the mobile drawer. */
+function SidebarInner({ collapsed = false, onNavigate }: SidebarInnerProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const storeData = useStoreInfo();
+  const menuItems = useVisibleMenuItems();
+
+  const storeName = storeData?.name || 'KedaiPOS';
+  const storeLocation = storeData?.location || '';
 
   const handleLogout = async () => {
     try {
@@ -144,31 +138,16 @@ export function Sidebar() {
   };
 
   return (
-    <div
-      className={`bg-card border-r border-border h-screen flex flex-col transition-all duration-300 relative ${isCollapsed ? 'w-20' : 'w-64'
-        }`}
-    >
-      {/* Toggle Button - Desktop */}
-      <div className="absolute -right-3 top-20 z-50 invisible md:visible">
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-6 w-6 rounded-full shadow-md bg-background border-border"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-        >
-          {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
-        </Button>
-      </div>
-
+    <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className={`p-4 border-b border-border flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
-        <div className={`flex items-center gap-3 overflow-hidden ${isCollapsed ? 'w-10' : 'w-full'}`}>
+      <div className={`p-4 border-b border-border flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
+        <div className={`flex items-center gap-3 overflow-hidden ${collapsed ? 'w-10' : 'w-full'}`}>
           <img
-            src={storeData?.image ? `${import.meta.env.VITE_API_URL || ''}/storage/${storeData.image}` : "/logo.png"}
+            src={storeData?.image ? storageUrl(storeData.image) : "/logo.png"}
             alt="Logo"
             className="w-10 h-10 object-cover rounded-full bg-secondary flex-shrink-0"
           />
-          {!isCollapsed && (
+          {!collapsed && (
             <div className="overflow-hidden min-w-0">
               <h1 className="font-display font-bold text-lg leading-tight truncate" title={storeName}>{storeName}</h1>
               <p className="text-xs text-muted-foreground truncate" title={storeLocation}>{storeLocation || 'Aplikasi Kasir'}</p>
@@ -179,14 +158,14 @@ export function Sidebar() {
 
       {/* User Info */}
       {user && (
-        <div className={`border-b border-border bg-secondary/30 flex items-center ${isCollapsed ? 'p-2 justify-center flex-col gap-2' : 'p-4 justify-between'}`}>
-          {!isCollapsed ? (
+        <div className={`border-b border-border bg-secondary/30 flex items-center ${collapsed ? 'p-2 justify-center flex-col gap-2' : 'p-4 justify-between'}`}>
+          {!collapsed ? (
             <div className="min-w-0 overflow-hidden">
               <p className="font-medium text-sm truncate">{user.name}</p>
               <p className="text-xs text-muted-foreground capitalize truncate">{user.role}</p>
             </div>
           ) : null}
-          <div className={`flex items-center gap-1 ${isCollapsed ? 'flex-col' : ''}`}>
+          <div className={`flex items-center gap-1 ${collapsed ? 'flex-col' : ''}`}>
             <ThemeToggle />
             <ModeToggle />
           </div>
@@ -204,17 +183,18 @@ export function Sidebar() {
           const LinkContent = (
             <Link
               to={item.path}
+              onClick={() => onNavigate?.()}
               className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-all group ${isActive
                 ? 'bg-primary text-primary-foreground'
                 : 'hover:bg-secondary text-muted-foreground hover:text-foreground'
-                } ${isCollapsed ? 'justify-center' : ''}`}
+                } ${collapsed ? 'justify-center' : ''}`}
             >
               <Icon className={`w-5 h-5 flex-shrink-0 ${isActive ? '' : 'group-hover:text-foreground'}`} />
-              {!isCollapsed && <span className="font-medium truncate">{item.label}</span>}
+              {!collapsed && <span className="font-medium truncate">{item.label}</span>}
             </Link>
           );
 
-          if (isCollapsed) {
+          if (collapsed) {
             return (
               <Tooltip key={item.path} delayDuration={0}>
                 <TooltipTrigger asChild>
@@ -233,7 +213,7 @@ export function Sidebar() {
 
       {/* Logout */}
       <div className="p-3 border-t border-border">
-        {isCollapsed ? (
+        {collapsed ? (
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
               <button
@@ -259,3 +239,66 @@ export function Sidebar() {
   );
 }
 
+/** Desktop sidebar — fixed panel, hidden on mobile (replaced by MobileTopBar). */
+export function Sidebar() {
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(isCollapsed));
+  }, [isCollapsed]);
+
+  return (
+    <div
+      className={`hidden md:flex bg-card border-r border-border h-screen flex-col transition-all duration-300 relative ${isCollapsed ? 'w-20' : 'w-64'
+        }`}
+    >
+      {/* Toggle Button - Desktop */}
+      <div className="absolute -right-3 top-20 z-50">
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-6 w-6 rounded-full shadow-md bg-background border-border"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+        >
+          {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
+        </Button>
+      </div>
+
+      <SidebarInner collapsed={isCollapsed} />
+    </div>
+  );
+}
+
+/** Mobile top bar with hamburger that opens the sidebar as an off-canvas drawer. */
+export function MobileTopBar() {
+  const [open, setOpen] = useState(false);
+  const storeData = useStoreInfo();
+  const storeName = storeData?.name || 'KedaiPOS';
+
+  return (
+    <header className="md:hidden sticky top-0 z-40 flex items-center gap-3 h-14 px-3 bg-card border-b border-border shadow-sm">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <Button variant="outline" size="icon" className="h-10 w-10 flex-shrink-0" aria-label="Buka menu">
+            <MenuIcon className="h-5 w-5" />
+          </Button>
+        </SheetTrigger>
+        <SheetContent side="left" className="p-0 w-72 max-w-[85vw] bg-card">
+          <SidebarInner collapsed={false} onNavigate={() => setOpen(false)} />
+        </SheetContent>
+      </Sheet>
+
+      <div className="flex items-center gap-2 min-w-0">
+        <img
+          src={storeData?.image ? storageUrl(storeData.image) : "/logo.png"}
+          alt="Logo"
+          className="w-8 h-8 object-cover rounded-full bg-secondary flex-shrink-0"
+        />
+        <h1 className="font-display font-bold text-base truncate" title={storeName}>{storeName}</h1>
+      </div>
+    </header>
+  );
+}
