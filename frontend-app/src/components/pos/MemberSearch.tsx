@@ -181,6 +181,18 @@ export function MemberSearch({ selectedMember, selectedReward, onMemberSelect, o
               />
             </div>
 
+            {!showCreate && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full gap-2 justify-start text-muted-foreground"
+                onClick={startCreate}
+              >
+                <UserPlus className="h-4 w-4" />
+                Tambah Member Baru
+              </Button>
+            )}
+
             {!showCreate && query.trim() && (
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {searching ? (
@@ -203,20 +215,19 @@ export function MemberSearch({ selectedMember, selectedReward, onMemberSelect, o
                     ));
                   })()
                 ) : searched ? (
-                  <div className="text-center py-3 space-y-2">
-                    <p className="text-sm text-muted-foreground">Member tidak ditemukan</p>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={startCreate}>
-                      <UserPlus className="h-4 w-4" />
-                      Daftarkan Member Baru
-                    </Button>
-                  </div>
+                  <p className="text-sm text-center py-3 text-muted-foreground">Member tidak ditemukan</p>
                 ) : null}
               </div>
             )}
 
             {showCreate && (
               <div className="space-y-3 border-t pt-3">
-                <p className="text-sm text-muted-foreground">Daftarkan member baru</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">Daftarkan member baru</p>
+                  <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setShowCreate(false)}>
+                    Kembali ke pencarian
+                  </Button>
+                </div>
                 <Input
                   placeholder="Nama pelanggan"
                   value={name}
