@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, UserPlus, X, Star, Gift } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,33 +18,63 @@ interface Props {
 export function MemberSearch({ selectedMember, selectedReward, onMemberSelect, onRewardSelect }: Props) {
   const [open, setOpen] = useState(false);
   const [rewardOpen, setRewardOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
+  const [results, setResults] = useState<Member[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [rewards, setRewards] = useState<PointReward[]>([]);
   const [loadingRewards, setLoadingRewards] = useState(false);
 
-  const handleSearch = async () => {
-    if (!phone.trim()) return;
-    setSearching(true);
-    try {
-      const res = await memberApi.findByPhone(phone.trim());
-      onMemberSelect(res.data);
-      setOpen(false);
-      setPhone('');
-      setShowCreate(false);
-      toast.success(`Selamat datang, ${res.data.name}! Poin: ${res.data.total_points}`);
-    } catch (err: unknown) {
-      if ((err as { response?: { status?: number } })?.response?.status === 404) {
-        setShowCreate(true);
-      } else {
-        toast.error('Gagal mencari member');
-      }
-    } finally {
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults([]);
       setSearching(false);
+      setSearched(false);
+      setShowCreate(false);
+      return;
     }
+    setSearching(true);
+    setShowCreate(false);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await memberApi.list(q);
+        setResults(res.data);
+        setSearched(true);
+      } catch {
+        toast.error('Gagal mencari member');
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const hasDuplicateNames = (list: Member[]) => {
+    const counts = new Map<string, number>();
+    list.forEach(m => counts.set(m.name, (counts.get(m.name) || 0) + 1));
+    return (name2: string) => (counts.get(name2) || 0) > 1;
+  };
+
+  const handleSelectResult = (member: Member) => {
+    onMemberSelect(member);
+    setOpen(false);
+    setQuery('');
+    setResults([]);
+    setShowCreate(false);
+    toast.success(`Selamat datang, ${member.name}! Poin: ${member.total_points}`);
+  };
+
+  const startCreate = () => {
+    const q = query.trim();
+    const looksLikePhone = /^[\d+][\d\s+-]*$/.test(q);
+    setPhone(looksLikePhone ? q : '');
+    setName(looksLikePhone ? '' : q);
+    setShowCreate(true);
   };
 
   const handleCreate = async () => {
@@ -57,8 +87,10 @@ export function MemberSearch({ selectedMember, selectedReward, onMemberSelect, o
       const res = await memberApi.create({ name: name.trim(), phone: phone.trim() });
       onMemberSelect(res.data);
       setOpen(false);
+      setQuery('');
       setPhone('');
       setName('');
+      setResults([]);
       setShowCreate(false);
       toast.success(`Member ${res.data.name} berhasil didaftarkan!`);
     } catch {
@@ -132,33 +164,71 @@ export function MemberSearch({ selectedMember, selectedReward, onMemberSelect, o
       )}
 
       {/* Search Dialog */}
-      <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setPhone(''); setName(''); setShowCreate(false); } }}>
+      <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setQuery(''); setPhone(''); setName(''); setResults([]); setShowCreate(false); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Cari atau Daftar Member</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="flex gap-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="No. WhatsApp / Telepon"
-                value={phone}
-                onChange={e => { setPhone(e.target.value); setShowCreate(false); }}
-                onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                placeholder="Cari nama atau No. WhatsApp / Telepon"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                className="pl-9"
+                autoFocus
               />
-              <Button onClick={handleSearch} disabled={searching || !phone.trim()} size="icon">
-                <Search className="h-4 w-4" />
-              </Button>
             </div>
+
+            {!showCreate && query.trim() && (
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {searching ? (
+                  <p className="text-sm text-center py-4 text-muted-foreground">Mencari...</p>
+                ) : results.length > 0 ? (
+                  (() => {
+                    const isDuplicate = hasDuplicateNames(results);
+                    return results.map(member => (
+                      <button
+                        key={member.id}
+                        onClick={() => handleSelectResult(member)}
+                        className="w-full text-left p-2.5 rounded-lg border border-border hover:border-amber-400 hover:bg-amber-50 transition-colors"
+                      >
+                        <p className="font-medium text-sm">{member.name}</p>
+                        {isDuplicate(member.name) && (
+                          <p className="text-xs text-muted-foreground">{member.phone}</p>
+                        )}
+                        <p className="text-xs text-amber-600 font-semibold">{member.total_points} poin</p>
+                      </button>
+                    ));
+                  })()
+                ) : searched ? (
+                  <div className="text-center py-3 space-y-2">
+                    <p className="text-sm text-muted-foreground">Member tidak ditemukan</p>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={startCreate}>
+                      <UserPlus className="h-4 w-4" />
+                      Daftarkan Member Baru
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             {showCreate && (
               <div className="space-y-3 border-t pt-3">
-                <p className="text-sm text-muted-foreground">Member dengan nomor <strong>{phone}</strong> belum terdaftar. Daftarkan sekarang?</p>
+                <p className="text-sm text-muted-foreground">Daftarkan member baru</p>
                 <Input
                   placeholder="Nama pelanggan"
                   value={name}
                   onChange={e => setName(e.target.value)}
+                  autoFocus={!phone}
+                />
+                <Input
+                  placeholder="No. WhatsApp / Telepon"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                  autoFocus
+                  autoFocus={!!phone}
                 />
                 <Button className="w-full gap-2" onClick={handleCreate} disabled={creating}>
                   <UserPlus className="h-4 w-4" />

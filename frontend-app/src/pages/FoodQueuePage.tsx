@@ -11,6 +11,13 @@ import {
 } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
 
 interface OrderItem {
     id: number;
@@ -34,7 +41,7 @@ interface QueueOrder {
     customer_name: string;
     daily_number: number;
     total: number;
-    queue_status: "pending" | "in_progress" | "completed";
+    queue_status: "pending" | "in_progress" | "completed" | "hold";
     drink_queue_status: "pending" | "completed";
     notes: string | null;
     created_at: string;
@@ -48,6 +55,7 @@ interface QueueOrder {
     second_paid_amount?: number;
     change_amount?: number;
     table?: { id: number; table_number: string; capacity: number } | null;
+    hold_reason?: string | null;
 }
 
 const DRINK_CATEGORIES = ["minuman", "drink", "beverage", "drinks"];
@@ -113,6 +121,8 @@ const FoodQueuePage = () => {
     const [notesValue, setNotesValue] = useState("");
     const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
     const [showEditDialog, setShowEditDialog] = useState(false);
+    const [holdDialogOrder, setHoldDialogOrder] = useState<QueueOrder | null>(null);
+    const [holdReason, setHoldReason] = useState("");
     const { toast } = useToast();
     const prevOrdersRef = useRef<QueueOrder[]>([]);
 
@@ -193,7 +203,7 @@ const FoodQueuePage = () => {
                     const items = getDisplayItems(o);
                     return items.filter(isFoodItem).length > 0;
                 }).sort((a, b) => {
-                    const p = { in_progress: 0, pending: 1, completed: 2 };
+                    const p = { in_progress: 0, pending: 1, hold: 2, completed: 3 };
                     return p[a.queue_status] - p[b.queue_status] || a.id - b.id;
                 });
                 setOrders(foodOrders);
@@ -246,6 +256,19 @@ const FoodQueuePage = () => {
             fetchStatistics();
         } catch (e) {
             toast({ title: "Error", description: "Gagal memperbarui status", variant: "destructive" });
+        }
+    };
+
+    const handleHoldOrder = async () => {
+        if (!holdDialogOrder) return;
+        try {
+            await api.put(`/queue/${holdDialogOrder.id}/status`, { queue_status: "hold", hold_reason: holdReason });
+            toast({ title: "Berhasil", description: "Pesanan ditahan" });
+            fetchQueue();
+            setHoldDialogOrder(null);
+            setHoldReason("");
+        } catch (e) {
+            toast({ title: "Error", description: "Gagal menahan pesanan", variant: "destructive" });
         }
     };
 
@@ -348,9 +371,12 @@ const FoodQueuePage = () => {
                                 const foodCompleted = order.queue_status === "completed";
                                 const isInProgress = order.queue_status === "in_progress";
 
+                                const isHold = order.queue_status === "hold";
+
                                 // Border & background based on state
                                 let cardClass = "border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ";
                                 if (foodCompleted) cardClass += "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80";
+                                else if (isHold) cardClass += "border-yellow-500 bg-yellow-50/80 dark:bg-yellow-950/30 ring-2 ring-yellow-400/40 shadow-yellow-100 shadow-md opacity-90";
                                 else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
                                 else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-purple-100 shadow-md";
                                 else if (isInProgress) cardClass += "border-blue-400 bg-blue-50 dark:bg-blue-950/20 shadow-lg shadow-blue-100 scale-[1.01]";
@@ -358,6 +384,7 @@ const FoodQueuePage = () => {
 
                                 let barColor = "h-1.5 w-full ";
                                 if (foodCompleted) barColor += "bg-green-500";
+                                else if (isHold) barColor += "bg-yellow-500";
                                 else if (isReactivated) barColor += "bg-red-500";
                                 else if (hasNewAddons) barColor += "bg-purple-500";
                                 else if (isInProgress) barColor += "bg-blue-500";
@@ -384,11 +411,17 @@ const FoodQueuePage = () => {
                                                 </div>
                                             )}
 
+                                            {isHold && order.hold_reason && (
+                                                <div className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 text-xs p-2 rounded-lg mb-3 font-medium border border-yellow-300 dark:border-yellow-700">
+                                                    <span className="font-bold">Alasan Hold:</span> {order.hold_reason}
+                                                </div>
+                                            )}
+
                                             {/* Header */}
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <span className={`text-5xl font-black leading-none ${foodCompleted ? "text-green-500" : isReactivated ? "text-red-500" : "text-orange-500"}`}>
+                                                        <span className={`text-5xl font-black leading-none ${foodCompleted ? "text-green-500" : isHold ? "text-yellow-600" : isReactivated ? "text-red-500" : "text-orange-500"}`}>
                                                             #{order.daily_number}
                                                         </span>
                                                         <div className="flex flex-col gap-1">
@@ -425,12 +458,14 @@ const FoodQueuePage = () => {
                                             {/* Food Items Box */}
                                             <div className={`rounded-xl border-2 overflow-hidden mb-3 ${
                                                 foodCompleted ? "border-green-400"
+                                                : isHold ? "border-yellow-400"
                                                 : isReactivated ? "border-red-400"
                                                 : "border-orange-300"
                                             }`}>
                                                 {/* Section Header */}
                                                 <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${
                                                     foodCompleted ? "bg-green-500"
+                                                    : isHold ? "bg-yellow-500"
                                                     : isReactivated ? "bg-red-500"
                                                     : "bg-orange-500"
                                                 }`}>
@@ -482,15 +517,32 @@ const FoodQueuePage = () => {
                                                     ))}
                                                 </div>
                                                 {/* Action Button */}
-                                                <div className="p-2 bg-white/40 dark:bg-transparent border-t border-orange-100 dark:border-orange-900/30">
+                                                <div className="flex flex-col gap-1 p-2 bg-white/40 dark:bg-transparent border-t border-orange-100 dark:border-orange-900/30">
                                                     {foodCompleted ? (
                                                         <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-orange-700 hover:bg-orange-100" onClick={() => handleFoodStatusChange(order.id, false)}>
                                                             <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
                                                         </Button>
                                                     ) : (
-                                                        <Button size="sm" className={`w-full h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-orange-500 hover:bg-orange-600"}`} onClick={() => handleFoodStatusChange(order.id, true)}>
-                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Makanan Selesai"}
-                                                        </Button>
+                                                        <div className="flex gap-1 w-full">
+                                                            <Button size="sm" className={`flex-1 h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-orange-500 hover:bg-orange-600"}`} onClick={() => handleFoodStatusChange(order.id, true)}>
+                                                                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Makanan Selesai"}
+                                                            </Button>
+                                                            {isHold ? (
+                                                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-yellow-500 text-yellow-600 bg-yellow-50 hover:bg-yellow-100 hover:text-yellow-700 shadow-sm" onClick={async () => {
+                                                                    await api.put(`/queue/${order.id}/status`, { queue_status: "pending" });
+                                                                    fetchQueue();
+                                                                }} title="Lanjutkan Pesanan">
+                                                                    <RefreshCw className="h-4 w-4" />
+                                                                </Button>
+                                                            ) : (
+                                                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-orange-300 text-orange-500 hover:bg-orange-50 hover:text-orange-600 shadow-sm" onClick={() => {
+                                                                    setHoldDialogOrder(order);
+                                                                    setHoldReason("");
+                                                                }} title="Tahan Pesanan">
+                                                                    <Clock className="h-4 w-4" />
+                                                                </Button>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
                                             </div>
@@ -535,6 +587,37 @@ const FoodQueuePage = () => {
                 order={editingOrder}
                 onSuccess={() => { prevOrdersRef.current = []; fetchQueue(); }}
             />
+
+            <Dialog open={!!holdDialogOrder} onOpenChange={(open) => !open && setHoldDialogOrder(null)}>
+                <DialogContent className="sm:max-w-[400px]">
+                    <DialogHeader>
+                        <DialogTitle>Tahan Pesanan #{holdDialogOrder?.daily_number}</DialogTitle>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <label className="text-sm font-medium mb-2 block">
+                            Alasan Pesanan Ditahan:
+                        </label>
+                        <Textarea
+                            value={holdReason}
+                            onChange={(e) => setHoldReason(e.target.value)}
+                            placeholder="Contoh: Menunggu item tambahan, pelanggan belum kembali..."
+                            className="min-h-[100px]"
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setHoldDialogOrder(null)}>
+                            Batal
+                        </Button>
+                        <Button
+                            className="bg-yellow-500 hover:bg-yellow-600 text-white"
+                            onClick={handleHoldOrder}
+                            disabled={!holdReason.trim()}
+                        >
+                            Tahan Pesanan
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </MainLayout>
     );
 };

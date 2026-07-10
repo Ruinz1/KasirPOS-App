@@ -5,9 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle2, Undo2, Coffee, Pencil, RefreshCw, GlassWater } from "lucide-react";
+import { CheckCircle2, Undo2, Coffee, Pencil, RefreshCw, GlassWater, Clock } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
 
 interface OrderItem {
     id: number;
@@ -31,8 +38,8 @@ interface QueueOrder {
     customer_name: string;
     daily_number: number;
     total: number;
-    queue_status: "pending" | "in_progress" | "completed";
-    drink_queue_status: "pending" | "completed";
+    queue_status: "pending" | "in_progress" | "completed" | "hold";
+    drink_queue_status: "pending" | "completed" | "hold";
     notes: string | null;
     created_at: string;
     order_type?: "dine_in" | "takeaway";
@@ -45,6 +52,7 @@ interface QueueOrder {
     second_paid_amount?: number;
     change_amount?: number;
     table?: { id: number; table_number: string; capacity: number } | null;
+    hold_reason?: string | null;
 }
 
 const DRINK_CATEGORIES = ["minuman", "drink", "beverage", "drinks"];
@@ -92,6 +100,8 @@ const DrinkQueuePage = () => {
     const [notesValue, setNotesValue] = useState("");
     const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
     const [showEditDialog, setShowEditDialog] = useState(false);
+    const [holdDialogOrder, setHoldDialogOrder] = useState<QueueOrder | null>(null);
+    const [holdReason, setHoldReason] = useState("");
     const { toast } = useToast();
     const prevOrdersRef = useRef<QueueOrder[]>([]);
 
@@ -147,7 +157,7 @@ const DrinkQueuePage = () => {
                     const items = getDisplayItems(o);
                     return items.filter(isDrinkItem).length > 0;
                 }).sort((a, b) => {
-                    const p: Record<string, number> = { in_progress: 0, pending: 1, completed: 2 };
+                    const p: Record<string, number> = { in_progress: 0, pending: 1, hold: 2, completed: 3 };
                     return (p[a.queue_status] ?? 1) - (p[b.queue_status] ?? 1) || a.id - b.id;
                 });
                 setOrders(drinkOrders);
@@ -201,6 +211,19 @@ const DrinkQueuePage = () => {
             fetchStatistics();
         } catch (e) {
             toast({ title: "Error", description: "Gagal memperbarui status", variant: "destructive" });
+        }
+    };
+
+    const handleHoldOrder = async () => {
+        if (!holdDialogOrder) return;
+        try {
+            await api.put(`/queue/${holdDialogOrder.id}/drink-status`, { drink_queue_status: "hold", hold_reason: holdReason });
+            toast({ title: "Berhasil", description: "Pesanan ditahan" });
+            fetchQueue();
+            setHoldDialogOrder(null);
+            setHoldReason("");
+        } catch (e) {
+            toast({ title: "Error", description: "Gagal menahan pesanan", variant: "destructive" });
         }
     };
 
@@ -300,14 +323,18 @@ const DrinkQueuePage = () => {
                                 const hasNewAddons = !isReactivated && drinkItems.some(i => i.is_addon);
                                 const drinkCompleted = order.drink_queue_status === "completed";
 
+                                const isHold = order.drink_queue_status === "hold";
+
                                 let cardClass = "border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ";
                                 if (drinkCompleted) cardClass += "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80";
+                                else if (isHold) cardClass += "border-slate-400 bg-slate-50 dark:bg-slate-900/30 ring-2 ring-slate-400/40 shadow-md opacity-90";
                                 else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
                                 else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md";
                                 else cardClass += "border-blue-300 bg-white dark:bg-blue-950/10 shadow-sm";
 
                                 let barColor = "h-1.5 w-full ";
                                 if (drinkCompleted) barColor += "bg-green-500";
+                                else if (isHold) barColor += "bg-slate-500";
                                 else if (isReactivated) barColor += "bg-red-500";
                                 else if (hasNewAddons) barColor += "bg-purple-500";
                                 else barColor += "bg-blue-400";
@@ -333,11 +360,17 @@ const DrinkQueuePage = () => {
                                                 </div>
                                             )}
 
+                                            {isHold && order.hold_reason && (
+                                                <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded-lg mb-3 font-medium border border-slate-300 dark:border-slate-600">
+                                                    <span className="font-bold">Alasan Hold:</span> {order.hold_reason}
+                                                </div>
+                                            )}
+
                                             {/* Header */}
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <span className={`text-5xl font-black leading-none ${drinkCompleted ? "text-green-500" : isReactivated ? "text-red-500" : "text-blue-500"}`}>
+                                                        <span className={`text-5xl font-black leading-none ${drinkCompleted ? "text-green-500" : isHold ? "text-slate-600" : isReactivated ? "text-red-500" : "text-blue-500"}`}>
                                                             #{order.daily_number}
                                                         </span>
                                                         <div className="flex flex-col gap-1">
@@ -374,11 +407,13 @@ const DrinkQueuePage = () => {
                                             {/* Drink Items Box */}
                                             <div className={`rounded-xl border-2 overflow-hidden mb-3 ${
                                                 drinkCompleted ? "border-green-400"
+                                                : isHold ? "border-slate-400"
                                                 : isReactivated ? "border-red-400"
                                                 : "border-blue-300"
                                             }`}>
                                                 <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${
                                                     drinkCompleted ? "bg-green-500"
+                                                    : isHold ? "bg-slate-500"
                                                     : isReactivated ? "bg-red-500"
                                                     : "bg-blue-500"
                                                 }`}>
@@ -428,15 +463,32 @@ const DrinkQueuePage = () => {
                                                     ))}
                                                 </div>
                                                 {/* Action Button */}
-                                                <div className="p-2 bg-white/40 dark:bg-transparent border-t border-blue-100 dark:border-blue-900/30">
+                                                <div className="flex flex-col gap-1 p-2 bg-white/40 dark:bg-transparent border-t border-blue-100 dark:border-blue-900/30">
                                                     {drinkCompleted ? (
                                                         <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => handleDrinkStatusChange(order.id, false)}>
                                                             <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
                                                         </Button>
                                                     ) : (
-                                                        <Button size="sm" className={`w-full h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`} onClick={() => handleDrinkStatusChange(order.id, true)}>
-                                                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
-                                                        </Button>
+                                                        <div className="flex gap-1 w-full">
+                                                            <Button size="sm" className={`flex-1 h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`} onClick={() => handleDrinkStatusChange(order.id, true)}>
+                                                                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
+                                                            </Button>
+                                                            {isHold ? (
+                                                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 shadow-sm" onClick={async () => {
+                                                                    await api.put(`/queue/${order.id}/drink-status`, { drink_queue_status: "pending" });
+                                                                    fetchQueue();
+                                                                }} title="Lanjutkan Pesanan">
+                                                                    <RefreshCw className="h-4 w-4" />
+                                                                </Button>
+                                                            ) : (
+                                                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600 shadow-sm" onClick={() => {
+                                                                    setHoldDialogOrder(order);
+                                                                    setHoldReason("");
+                                                                }} title="Tahan Pesanan">
+                                                                    <Clock className="h-4 w-4" />
+                                                                </Button>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
                                             </div>
@@ -481,6 +533,37 @@ const DrinkQueuePage = () => {
                 order={editingOrder}
                 onSuccess={() => { prevOrdersRef.current = []; fetchQueue(); fetchStatistics(); }}
             />
+
+            <Dialog open={!!holdDialogOrder} onOpenChange={(open) => !open && setHoldDialogOrder(null)}>
+                <DialogContent className="sm:max-w-[400px]">
+                    <DialogHeader>
+                        <DialogTitle>Tahan Pesanan #{holdDialogOrder?.daily_number}</DialogTitle>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <label className="text-sm font-medium mb-2 block">
+                            Alasan Pesanan Ditahan:
+                        </label>
+                        <Textarea
+                            value={holdReason}
+                            onChange={(e) => setHoldReason(e.target.value)}
+                            placeholder="Contoh: Menunggu es batu, pelanggan belum bayar..."
+                            className="min-h-[100px]"
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setHoldDialogOrder(null)}>
+                            Batal
+                        </Button>
+                        <Button
+                            className="bg-slate-500 hover:bg-slate-600 text-white"
+                            onClick={handleHoldOrder}
+                            disabled={!holdReason.trim()}
+                        >
+                            Tahan Pesanan
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </MainLayout>
     );
 };

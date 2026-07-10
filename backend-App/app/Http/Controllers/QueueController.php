@@ -29,7 +29,7 @@ class QueueController extends Controller
                 // 1. queue_status pending atau in_progress
                 // 2. queue_status completed TAPI queue_completed_at masih null
                 //    (berarti makanan selesai tapi minuman belum)
-                $query->whereIn('queue_status', ['pending', 'in_progress'])
+                $query->whereIn('queue_status', ['pending', 'in_progress', 'hold'])
                     ->orWhere(function ($q) {
                         $q->where('queue_status', 'completed')
                             ->whereNull('queue_completed_at');
@@ -49,7 +49,8 @@ class QueueController extends Controller
     public function updateStatus(Request $request, $id)
     {
         $request->validate([
-            'queue_status' => 'required|in:pending,in_progress,completed',
+            'queue_status' => 'required|in:pending,in_progress,completed,hold',
+            'hold_reason' => 'nullable|string',
         ]);
 
         $order = Order::with('items.menuItem')->findOrFail($id);
@@ -67,6 +68,12 @@ class QueueController extends Controller
         $previousQueueCompletedAt = $order->queue_completed_at;
 
         $order->queue_status = $request->queue_status;
+        if ($request->has('hold_reason')) {
+            $order->hold_reason = $request->hold_reason;
+        }
+        if ($request->queue_status !== 'hold') {
+            $order->hold_reason = null;
+        }
 
         if ($request->queue_status === 'completed') {
             // Cek apakah ini adalah re-activated order (sudah pernah selesai sebelumnya)
@@ -104,7 +111,7 @@ class QueueController extends Controller
                     $order->queue_completed_at = now();
                 }
             }
-        } elseif ($request->queue_status === 'pending' || $request->queue_status === 'in_progress') {
+        } elseif ($request->queue_status === 'pending' || $request->queue_status === 'in_progress' || $request->queue_status === 'hold') {
             // Reset queue_completed_at jika dikembalikan ke pending/in_progress
             $order->queue_completed_at = null;
         }
@@ -126,7 +133,8 @@ class QueueController extends Controller
     public function updateDrinkStatus(Request $request, $id)
     {
         $request->validate([
-            'drink_queue_status' => 'required|in:pending,completed',
+            'drink_queue_status' => 'required|in:pending,completed,hold',
+            'hold_reason' => 'nullable|string',
         ]);
 
         $order = Order::with('items.menuItem')->findOrFail($id);
@@ -140,6 +148,12 @@ class QueueController extends Controller
         $drinkCategories = ['minuman', 'drink', 'beverage', 'drinks'];
 
         $order->drink_queue_status = $request->drink_queue_status;
+        if ($request->has('hold_reason')) {
+            $order->hold_reason = $request->hold_reason;
+        }
+        if ($request->drink_queue_status !== 'hold') {
+            $order->hold_reason = null;
+        }
 
         // Jika minuman selesai → cek apakah perlu auto-complete seluruh order
         if ($request->drink_queue_status === 'completed') {
@@ -232,7 +246,7 @@ class QueueController extends Controller
 
         $pending = Order::where('store_id', $storeId)
             ->where('status', 'completed')
-            ->where('queue_status', 'pending')
+            ->whereIn('queue_status', ['pending', 'hold'])
             ->whereDate('created_at', today()) // Only today
             ->count();
 

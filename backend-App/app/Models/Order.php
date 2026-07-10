@@ -36,6 +36,7 @@ class Order extends Model
         'queue_status',
         'drink_queue_status',
         'notes',
+        'hold_reason',
         'queue_completed_at',
         'store_id',
         'table_id',
