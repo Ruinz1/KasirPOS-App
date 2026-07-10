@@ -10,6 +10,13 @@ export interface Member {
   updated_at: string;
 }
 
+export interface MemberRFM extends Member {
+  frequency: number;
+  monetary: number;
+  last_order_at: string | null;
+  recency_days: number | null;
+}
+
 export interface PointTransaction {
   id: number;
   member_id: number;

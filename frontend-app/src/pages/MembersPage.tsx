@@ -4,14 +4,29 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Search, Star, Phone, UserPlus, Trash2, History, X, TrendingUp } from 'lucide-react';
+import { Search, Star, Phone, UserPlus, Trash2, History, TrendingUp, Repeat, UserX, MessageCircle, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { memberApi } from '@/lib/memberApi';
-import type { Member, PointTransaction } from '@/types/member';
+import type { Member, MemberRFM, PointTransaction } from '@/types/member';
 import { formatCurrency } from '@/utils/calculations';
 
+type RfmType = 'spender' | 'frequency' | 'inactive';
+
+const RFM_TABS: { key: RfmType; label: string; icon: typeof TrendingUp }[] = [
+  { key: 'spender', label: 'Top Spender', icon: Wallet },
+  { key: 'frequency', label: 'Paling Sering Datang', icon: Repeat },
+  { key: 'inactive', label: 'Tidak Kembali', icon: UserX },
+];
+
+function toWhatsAppLink(phone: string) {
+  const digits = phone.replace(/\D/g, '');
+  const normalized = digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
+  return `https://wa.me/${normalized}`;
+}
+
 export default function MembersPage() {
+  const [tab, setTab] = useState<'list' | 'rfm'>('list');
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -22,6 +37,11 @@ export default function MembersPage() {
   const [creating, setCreating] = useState(false);
   const [editForm, setEditForm] = useState<{ name: string; phone: string } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [rfmType, setRfmType] = useState<RfmType>('spender');
+  const [inactiveDays, setInactiveDays] = useState(60);
+  const [rfmData, setRfmData] = useState<MemberRFM[]>([]);
+  const [rfmLoading, setRfmLoading] = useState(false);
 
   const fetchMembers = async (q?: string) => {
     setLoading(true);
@@ -35,13 +55,31 @@ export default function MembersPage() {
     }
   };
 
-  useEffect(() => {
-    fetchMembers();
-  }, []);
+  const fetchRfm = async (q?: string) => {
+    setRfmLoading(true);
+    try {
+      const res = await memberApi.rfm({ type: rfmType, inactive_days: inactiveDays, search: q });
+      setRfmData(res.data);
+    } catch {
+      toast.error('Gagal memuat analitik RFM');
+    } finally {
+      setRfmLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const t = setTimeout(() => fetchMembers(search || undefined), 400);
+    if (tab === 'list') fetchMembers(search || undefined);
+    else fetchRfm(search || undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, rfmType, inactiveDays]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (tab === 'list') fetchMembers(search || undefined);
+      else fetchRfm(search || undefined);
+    }, 400);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   const handleCreate = async () => {
@@ -131,75 +169,201 @@ export default function MembersPage() {
           </Button>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-card border border-border rounded-xl p-4">
-            <p className="text-sm text-muted-foreground">Total Member</p>
-            <p className="text-3xl font-bold mt-1">{totalMembers}</p>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-4">
-            <p className="text-sm text-muted-foreground">Total Poin Aktif</p>
-            <p className="text-3xl font-bold mt-1 text-amber-600">{totalPoints.toLocaleString()}</p>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-4">
-            <p className="text-sm text-muted-foreground">Member Teratas</p>
-            <p className="text-lg font-bold mt-1 truncate">{topMember?.name ?? '-'}</p>
-            {topMember && <p className="text-xs text-amber-600">{topMember.total_points} poin</p>}
-          </div>
+        {/* Tabs */}
+        <div className="flex gap-2 border-b border-border">
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === 'list' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setTab('list')}
+          >
+            Daftar Member
+          </button>
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === 'rfm' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setTab('rfm')}
+          >
+            Analitik RFM
+          </button>
         </div>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Cari nama atau nomor telepon..." value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
-
-        {/* List */}
-        {loading ? (
-          <div className="text-center py-12 text-muted-foreground">Memuat data...</div>
-        ) : members.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <Star className="h-12 w-12 mx-auto mb-3 opacity-30" />
-            <p>Belum ada member</p>
-            <p className="text-sm">Member akan otomatis terdaftar saat checkout di POS</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {members.map((member, idx) => (
-              <div
-                key={member.id}
-                className="flex items-center gap-4 bg-card border border-border rounded-xl p-4 hover:border-primary/40 transition-colors cursor-pointer"
-                onClick={() => handleOpenDetail(member)}
-              >
-                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-700 text-sm font-bold shrink-0">
-                  {idx + 1}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{member.name}</p>
-                  <p className="text-sm text-muted-foreground flex items-center gap-1">
-                    <Phone className="h-3 w-3" /> {member.phone}
-                  </p>
-                </div>
-                <div className="text-right shrink-0">
-                  <Badge variant="secondary" className="bg-amber-100 text-amber-700 border-0">
-                    <Star className="h-3 w-3 mr-1" />
-                    {member.total_points} poin
-                  </Badge>
-                  {member.orders_count !== undefined && (
-                    <p className="text-xs text-muted-foreground mt-1">{member.orders_count} transaksi</p>
-                  )}
-                </div>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={e => { e.stopPropagation(); handleDelete(member); }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+        {tab === 'list' ? (
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-card border border-border rounded-xl p-4">
+                <p className="text-sm text-muted-foreground">Total Member</p>
+                <p className="text-3xl font-bold mt-1">{totalMembers}</p>
               </div>
-            ))}
-          </div>
+              <div className="bg-card border border-border rounded-xl p-4">
+                <p className="text-sm text-muted-foreground">Total Poin Aktif</p>
+                <p className="text-3xl font-bold mt-1 text-amber-600">{totalPoints.toLocaleString()}</p>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-4">
+                <p className="text-sm text-muted-foreground">Member Teratas</p>
+                <p className="text-lg font-bold mt-1 truncate">{topMember?.name ?? '-'}</p>
+                {topMember && <p className="text-xs text-amber-600">{topMember.total_points} poin</p>}
+              </div>
+            </div>
+
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input className="pl-9" placeholder="Cari nama atau nomor telepon..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+
+            {/* List */}
+            {loading ? (
+              <div className="text-center py-12 text-muted-foreground">Memuat data...</div>
+            ) : members.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Star className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                <p>Belum ada member</p>
+                <p className="text-sm">Member akan otomatis terdaftar saat checkout di POS</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {members.map((member, idx) => (
+                  <div
+                    key={member.id}
+                    className="flex items-center gap-4 bg-card border border-border rounded-xl p-4 hover:border-primary/40 transition-colors cursor-pointer"
+                    onClick={() => handleOpenDetail(member)}
+                  >
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-700 text-sm font-bold shrink-0">
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{member.name}</p>
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Phone className="h-3 w-3" /> {member.phone}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-700 border-0">
+                        <Star className="h-3 w-3 mr-1" />
+                        {member.total_points} poin
+                      </Badge>
+                      {member.orders_count !== undefined && (
+                        <p className="text-xs text-muted-foreground mt-1">{member.orders_count} transaksi</p>
+                      )}
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={e => { e.stopPropagation(); handleDelete(member); }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* RFM Filter Tabs */}
+            <div className="flex flex-wrap gap-2">
+              {RFM_TABS.map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => setRfmType(key)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    rfmType === key
+                      ? 'bg-amber-500 border-amber-500 text-white'
+                      : 'bg-card border-border text-muted-foreground hover:border-amber-400'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </button>
+              ))}
+              {rfmType === 'inactive' && (
+                <select
+                  value={inactiveDays}
+                  onChange={e => setInactiveDays(Number(e.target.value))}
+                  className="px-3 py-2 rounded-lg text-sm border border-border bg-card"
+                >
+                  <option value={30}>Belum kembali 1 bulan+</option>
+                  <option value={60}>Belum kembali 2 bulan+</option>
+                  <option value={90}>Belum kembali 3 bulan+</option>
+                </select>
+              )}
+            </div>
+
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input className="pl-9" placeholder="Cari nama atau nomor telepon..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+
+            {/* RFM List */}
+            {rfmLoading ? (
+              <div className="text-center py-12 text-muted-foreground">Memuat data...</div>
+            ) : rfmData.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                {rfmType === 'inactive' ? (
+                  <>
+                    <UserX className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p>Tidak ada member yang tidak kembali di periode ini</p>
+                  </>
+                ) : (
+                  <>
+                    <Star className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p>Belum ada data transaksi member</p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {rfmData.map((member, idx) => (
+                  <div
+                    key={member.id}
+                    className="flex items-center gap-4 bg-card border border-border rounded-xl p-4 hover:border-primary/40 transition-colors cursor-pointer"
+                    onClick={() => handleOpenDetail(member)}
+                  >
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-700 text-sm font-bold shrink-0">
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{member.name}</p>
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Phone className="h-3 w-3" /> {member.phone}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {member.frequency}x transaksi &bull; {formatCurrency(member.monetary)}
+                        {member.last_order_at && (
+                          <> &bull; Terakhir {new Date(member.last_order_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</>
+                        )}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      {rfmType === 'spender' && (
+                        <p className="font-bold text-green-600">{formatCurrency(member.monetary)}</p>
+                      )}
+                      {rfmType === 'frequency' && (
+                        <p className="font-bold text-blue-600">{member.frequency}x</p>
+                      )}
+                      {rfmType === 'inactive' && (
+                        <p className="font-bold text-red-500">{member.recency_days} hari</p>
+                      )}
+                    </div>
+                    {rfmType === 'inactive' && (
+                      <a
+                        href={toWhatsAppLink(member.phone)}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        className="shrink-0"
+                      >
+                        <Button size="icon" variant="outline" className="text-green-600 border-green-300 hover:bg-green-50">
+                          <MessageCircle className="h-4 w-4" />
+                        </Button>
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 

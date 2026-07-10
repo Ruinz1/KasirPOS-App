@@ -123,6 +123,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/members', [MemberController::class, 'index']);
     Route::post('/members', [MemberController::class, 'store']);
     Route::post('/members/find-by-phone', [MemberController::class, 'findByPhone']);
+    Route::get('/members/rfm', [MemberController::class, 'rfm']);
     Route::get('/members/{member}', [MemberController::class, 'show']);
     Route::put('/members/{member}', [MemberController::class, 'update']);
     Route::delete('/members/{member}', [MemberController::class, 'destroy']);

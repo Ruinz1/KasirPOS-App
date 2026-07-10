@@ -1,9 +1,12 @@
 import api from './api';
-import type { Member, PointReward, PointTransaction } from '@/types/member';
+import type { Member, MemberRFM, PointReward, PointTransaction } from '@/types/member';
 
 export const memberApi = {
   list: (search?: string) =>
     api.get<Member[]>('/members', { params: search ? { search } : {} }),
+
+  rfm: (params: { type: 'spender' | 'frequency' | 'inactive'; inactive_days?: number; search?: string }) =>
+    api.get<MemberRFM[]>('/members/rfm', { params }),
 
   findByPhone: (phone: string) =>
     api.post<Member>('/members/find-by-phone', { phone }),
