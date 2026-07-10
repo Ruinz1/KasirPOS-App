@@ -54,6 +54,7 @@ interface QueueOrder {
     change_amount?: number;
     table?: { id: number; table_number: string; capacity: number } | null;
     hold_reason?: string | null;
+    drink_hold_reason?: string | null;
 }
 
 const DRINK_CATEGORIES = ["minuman", "drink", "beverage", "drinks"];
@@ -364,9 +365,9 @@ const DrinkQueuePage = () => {
                                                 </div>
                                             )}
 
-                                            {isHold && order.hold_reason && (
+                                            {isHold && order.drink_hold_reason && (
                                                 <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded-lg mb-3 font-medium border border-slate-300 dark:border-slate-600">
-                                                    <span className="font-bold">Alasan Hold:</span> {order.hold_reason}
+                                                    <span className="font-bold">Alasan Hold:</span> {order.drink_hold_reason}
                                                 </div>
                                             )}
 

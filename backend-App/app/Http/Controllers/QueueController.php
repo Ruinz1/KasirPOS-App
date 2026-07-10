@@ -189,11 +189,13 @@ class QueueController extends Controller
         $drinkCategories = ['minuman', 'drink', 'beverage', 'drinks'];
 
         $order->drink_queue_status = $request->drink_queue_status;
+        // Alasan hold minuman disimpan terpisah (drink_hold_reason) agar tidak
+        // menimpa/menghapus alasan hold makanan (hold_reason).
         if ($request->has('hold_reason')) {
-            $order->hold_reason = $request->hold_reason;
+            $order->drink_hold_reason = $request->hold_reason;
         }
         if ($request->drink_queue_status !== 'hold') {
-            $order->hold_reason = null;
+            $order->drink_hold_reason = null;
         }
 
         // Jika minuman selesai → cek apakah perlu auto-complete seluruh order

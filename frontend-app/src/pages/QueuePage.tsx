@@ -5,10 +5,18 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, Pencil } from "lucide-react";
+import { useAuth, HOLD_QUEUE_POSITIONS } from "@/hooks/useAuth";
+import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, Pencil, RefreshCw } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
 import { Link } from "react-router-dom";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+} from "@/components/ui/dialog";
 
 interface OrderItem {
     id: number;
@@ -32,8 +40,10 @@ interface QueueOrder {
     customer_name: string;
     daily_number: number;
     total: number;
-    queue_status: "pending" | "in_progress" | "completed";
-    drink_queue_status: "pending" | "completed";
+    queue_status: "pending" | "in_progress" | "completed" | "hold";
+    drink_queue_status: "pending" | "completed" | "hold";
+    hold_reason?: string | null;
+    drink_hold_reason?: string | null;
     notes: string | null;
     created_at: string;
     order_type?: "dine_in" | "takeaway";
@@ -99,9 +109,15 @@ const QueuePage = () => {
     const [notesValue, setNotesValue] = useState("");
     const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
     const { toast } = useToast();
+    const { canEdit, hasAnyPosition } = useAuth();
+    // Hold/lanjutkan pesanan: admin & owner, atau jabatan dapur/manajemen (mis. Kitchen Assistant)
+    const canHold = canEdit() || hasAnyPosition(HOLD_QUEUE_POSITIONS);
     const prevOrdersRef = useRef<QueueOrder[]>([]);
     const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
     const [showEditDialog, setShowEditDialog] = useState(false);
+    // Hold terpisah untuk makanan & minuman — hold makanan TIDAK menahan minuman, dan sebaliknya
+    const [holdTarget, setHoldTarget] = useState<{ order: QueueOrder; type: "food" | "drink" } | null>(null);
+    const [holdReason, setHoldReason] = useState("");
 
     // Helper: Apakah order ini harus disembunyikan dari antrian?
     // Order tersembunyi HANYA jika SEMUA section yang ada sudah selesai:
@@ -218,7 +234,7 @@ const QueuePage = () => {
                 const sortedData = [...data]
                     .filter(order => !shouldHideOrder(order))
                     .sort((a, b) => {
-                        const statusPriority = { in_progress: 0, pending: 1, completed: 2 };
+                        const statusPriority = { in_progress: 0, pending: 1, hold: 2, completed: 3 };
                         return statusPriority[a.queue_status] - statusPriority[b.queue_status] || a.id - b.id;
                     });
 
@@ -395,6 +411,58 @@ const QueuePage = () => {
             toast({
                 title: "Error",
                 description: "Gagal memperbarui status minuman",
+                variant: "destructive",
+            });
+        }
+    };
+
+    // Tahan pesanan (hold) — makanan & minuman ditahan TERPISAH
+    const handleHoldSubmit = async () => {
+        if (!holdTarget) return;
+        try {
+            if (holdTarget.type === "food") {
+                await api.put(`/queue/${holdTarget.order.id}/status`, { queue_status: "hold", hold_reason: holdReason });
+            } else {
+                await api.put(`/queue/${holdTarget.order.id}/drink-status`, { drink_queue_status: "hold", hold_reason: holdReason });
+            }
+            toast({
+                title: "⏸ Pesanan Ditahan",
+                description: `${holdTarget.type === "food" ? "Makanan" : "Minuman"} #${holdTarget.order.daily_number} ditahan${holdReason ? `: ${holdReason}` : ""}`,
+                className: "bg-yellow-600 text-white border-none",
+            });
+            setHoldTarget(null);
+            setHoldReason("");
+            fetchQueue();
+            fetchStatistics();
+        } catch (error: any) {
+            console.error("Error holding order:", error);
+            toast({
+                title: "Error",
+                description: error.response?.data?.message || "Gagal menahan pesanan",
+                variant: "destructive",
+            });
+        }
+    };
+
+    // Lanjutkan pesanan dari hold → pending
+    const handleResume = async (orderId: number, type: "food" | "drink") => {
+        try {
+            if (type === "food") {
+                await api.put(`/queue/${orderId}/status`, { queue_status: "pending" });
+            } else {
+                await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: "pending" });
+            }
+            toast({
+                title: "▶ Pesanan Dilanjutkan",
+                description: `${type === "food" ? "Makanan" : "Minuman"} kembali ke antrian`,
+            });
+            fetchQueue();
+            fetchStatistics();
+        } catch (error: any) {
+            console.error("Error resuming order:", error);
+            toast({
+                title: "Error",
+                description: error.response?.data?.message || "Gagal melanjutkan pesanan",
                 variant: "destructive",
             });
         }
@@ -629,15 +697,18 @@ const QueuePage = () => {
                                         const foodItems = displayItems.filter(isFoodItem);
                                         const hasVisibleAddons = foodItems.some(i => i.is_addon);
                                         const foodCompleted = order.queue_status === 'completed';
+                                        const foodHold = order.queue_status === 'hold';
                                         return (
                                             <Card key={`food-${order.id}`} className={`border-2 hover:shadow-lg transition-all ${
                                                 foodCompleted
                                                     ? 'border-green-500 bg-green-50/50 dark:bg-green-950/10 opacity-75'
-                                                    : hasVisibleAddons
-                                                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-500/20'
-                                                        : order.queue_status === 'in_progress'
-                                                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20 shadow-lg scale-[1.02]'
-                                                            : 'border-orange-400 bg-orange-50 dark:bg-orange-950/20'
+                                                    : foodHold
+                                                        ? 'border-yellow-500 bg-yellow-50/80 dark:bg-yellow-950/20 ring-2 ring-yellow-400/40 opacity-90'
+                                                        : hasVisibleAddons
+                                                            ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-500/20'
+                                                            : order.queue_status === 'in_progress'
+                                                                ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/20 shadow-lg scale-[1.02]'
+                                                                : 'border-orange-400 bg-orange-50 dark:bg-orange-950/20'
                                             }`}>
                                                 <CardContent className="p-4">
                                                     {hasVisibleAddons && !foodCompleted && (
@@ -662,12 +733,19 @@ const QueuePage = () => {
                                                             <p className="text-xs text-muted-foreground">{formatTime(order.created_at)}</p>
                                                         </div>
                                                     </div>
+                                                    {/* Alasan hold makanan */}
+                                                    {foodHold && order.hold_reason && (
+                                                        <div className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 text-xs p-2 rounded mb-2 font-medium border border-yellow-300 dark:border-yellow-700">
+                                                            <span className="font-bold">⏸ Alasan Hold:</span> {order.hold_reason}
+                                                        </div>
+                                                    )}
                                                     {/* Daftar Makanan */}
-                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ foodCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : 'border-orange-300 bg-orange-50/50 dark:bg-orange-950/10'}`}>
-                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ foodCompleted ? 'bg-green-500' : 'bg-orange-400'}`}>
+                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ foodCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : foodHold ? 'border-yellow-400 bg-yellow-50/60 dark:bg-yellow-950/10' : 'border-orange-300 bg-orange-50/50 dark:bg-orange-950/10'}`}>
+                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ foodCompleted ? 'bg-green-500' : foodHold ? 'bg-yellow-500' : 'bg-orange-400'}`}>
                                                             <Utensils className="h-3 w-3" />
                                                             <span>MAKANAN</span>
                                                             {foodCompleted && <span className="text-[10px] bg-white/20 px-1 rounded">✓ Selesai</span>}
+                                                            {foodHold && <span className="text-[10px] bg-white/20 px-1 rounded">⏸ Ditahan</span>}
                                                         </div>
                                                         <div className="px-3 py-2 space-y-1 max-h-36 overflow-y-auto">
                                                             {foodItems.map(item => (
@@ -685,9 +763,20 @@ const QueuePage = () => {
                                                                     <Undo2 className="h-3 w-3 mr-1" /> Batalkan Selesai
                                                                 </Button>
                                                             ) : (
-                                                                <Button size="sm" className="w-full h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleFoodStatusChange(order.id, true)}>
-                                                                    <CheckCircle2 className="h-3 w-3 mr-1" /> Makanan Selesai
-                                                                </Button>
+                                                                <div className="flex gap-1">
+                                                                    <Button size="sm" className="flex-1 h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleFoodStatusChange(order.id, true)}>
+                                                                        <CheckCircle2 className="h-3 w-3 mr-1" /> Makanan Selesai
+                                                                    </Button>
+                                                                    {canHold && (foodHold ? (
+                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-yellow-500 text-yellow-600 bg-yellow-50 hover:bg-yellow-100 hover:text-yellow-700" onClick={() => handleResume(order.id, "food")} title="Lanjutkan Makanan">
+                                                                            <RefreshCw className="h-3.5 w-3.5" />
+                                                                        </Button>
+                                                                    ) : (
+                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-orange-300 text-orange-500 hover:bg-orange-50 hover:text-orange-600" onClick={() => { setHoldTarget({ order, type: "food" }); setHoldReason(""); }} title="Tahan Makanan">
+                                                                            <Clock className="h-3.5 w-3.5" />
+                                                                        </Button>
+                                                                    ))}
+                                                                </div>
                                                             )}
                                                         </div>
                                                     </div>
@@ -767,13 +856,16 @@ const QueuePage = () => {
                                         const drinkItems = displayItems.filter(isDrinkItem);
                                         const hasVisibleAddons = drinkItems.some(i => i.is_addon);
                                         const drinkCompleted = order.drink_queue_status === 'completed';
+                                        const drinkHold = order.drink_queue_status === 'hold';
                                         return (
                                             <Card key={`drink-${order.id}`} className={`border-2 hover:shadow-lg transition-all ${
                                                 drinkCompleted
                                                     ? 'border-green-500 bg-green-50/50 dark:bg-green-950/10 opacity-75'
-                                                    : hasVisibleAddons
-                                                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-500/20'
-                                                        : 'border-blue-400 bg-blue-50 dark:bg-blue-950/20'
+                                                    : drinkHold
+                                                        ? 'border-slate-400 bg-slate-50 dark:bg-slate-900/30 ring-2 ring-slate-400/40 opacity-90'
+                                                        : hasVisibleAddons
+                                                            ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-500/20'
+                                                            : 'border-blue-400 bg-blue-50 dark:bg-blue-950/20'
                                             }`}>
                                                 <CardContent className="p-4">
                                                     {hasVisibleAddons && !drinkCompleted && (
@@ -798,12 +890,19 @@ const QueuePage = () => {
                                                             <p className="text-xs text-muted-foreground">{formatTime(order.created_at)}</p>
                                                         </div>
                                                     </div>
+                                                    {/* Alasan hold minuman (terpisah dari makanan) */}
+                                                    {drinkHold && order.drink_hold_reason && (
+                                                        <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded mb-2 font-medium border border-slate-300 dark:border-slate-600">
+                                                            <span className="font-bold">⏸ Alasan Hold:</span> {order.drink_hold_reason}
+                                                        </div>
+                                                    )}
                                                     {/* Daftar Minuman */}
-                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ drinkCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : 'border-blue-300 bg-blue-50/50 dark:bg-blue-950/10'}`}>
-                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ drinkCompleted ? 'bg-green-500' : 'bg-blue-500'}`}>
+                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ drinkCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : drinkHold ? 'border-slate-400 bg-slate-50/60 dark:bg-slate-900/20' : 'border-blue-300 bg-blue-50/50 dark:bg-blue-950/10'}`}>
+                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ drinkCompleted ? 'bg-green-500' : drinkHold ? 'bg-slate-500' : 'bg-blue-500'}`}>
                                                             <Coffee className="h-3 w-3" />
                                                             <span>MINUMAN</span>
                                                             {drinkCompleted && <span className="text-[10px] bg-white/20 px-1 rounded">✓ Selesai</span>}
+                                                            {drinkHold && <span className="text-[10px] bg-white/20 px-1 rounded">⏸ Ditahan</span>}
                                                         </div>
                                                         <div className="px-3 py-2 space-y-1 max-h-36 overflow-y-auto">
                                                             {drinkItems.map(item => (
@@ -821,9 +920,20 @@ const QueuePage = () => {
                                                                     <Undo2 className="h-3 w-3 mr-1" /> Batalkan Selesai
                                                                 </Button>
                                                             ) : (
-                                                                <Button size="sm" className="w-full h-7 text-xs bg-blue-500 hover:bg-blue-600 text-white" onClick={() => handleDrinkStatusChange(order.id, true)}>
-                                                                    <CheckCircle2 className="h-3 w-3 mr-1" /> Minuman Selesai
-                                                                </Button>
+                                                                <div className="flex gap-1">
+                                                                    <Button size="sm" className="flex-1 h-7 text-xs bg-blue-500 hover:bg-blue-600 text-white" onClick={() => handleDrinkStatusChange(order.id, true)}>
+                                                                        <CheckCircle2 className="h-3 w-3 mr-1" /> Minuman Selesai
+                                                                    </Button>
+                                                                    {canHold && (drinkHold ? (
+                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700" onClick={() => handleResume(order.id, "drink")} title="Lanjutkan Minuman">
+                                                                            <RefreshCw className="h-3.5 w-3.5" />
+                                                                        </Button>
+                                                                    ) : (
+                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600" onClick={() => { setHoldTarget({ order, type: "drink" }); setHoldReason(""); }} title="Tahan Minuman">
+                                                                            <Clock className="h-3.5 w-3.5" />
+                                                                        </Button>
+                                                                    ))}
+                                                                </div>
                                                             )}
                                                         </div>
                                                     </div>
@@ -861,6 +971,34 @@ const QueuePage = () => {
                 )}
             </div>
 
+
+            {/* Hold Dialog — makanan & minuman ditahan terpisah */}
+            <Dialog open={!!holdTarget} onOpenChange={(open) => !open && setHoldTarget(null)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>
+                            Tahan {holdTarget?.type === "food" ? "Makanan" : "Minuman"} #{holdTarget?.order.daily_number}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground">
+                            Hanya bagian {holdTarget?.type === "food" ? "makanan" : "minuman"} yang ditahan — bagian lainnya tetap berjalan di antrian.
+                        </p>
+                        <Textarea
+                            value={holdReason}
+                            onChange={(e) => setHoldReason(e.target.value)}
+                            placeholder="Alasan menahan pesanan (opsional)..."
+                            rows={3}
+                        />
+                    </div>
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={() => setHoldTarget(null)}>Batal</Button>
+                        <Button className="bg-yellow-500 hover:bg-yellow-600 text-white" onClick={handleHoldSubmit}>
+                            <Clock className="h-4 w-4 mr-1.5" /> Tahan Pesanan
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Edit Order Dialog */}
             <EditQueueOrderDialog
