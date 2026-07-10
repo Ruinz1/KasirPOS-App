@@ -763,17 +763,17 @@ const QueuePage = () => {
                                                                     <Undo2 className="h-3 w-3 mr-1" /> Batalkan Selesai
                                                                 </Button>
                                                             ) : (
-                                                                <div className="flex gap-1">
-                                                                    <Button size="sm" className="flex-1 h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleFoodStatusChange(order.id, true)}>
+                                                                <div className="flex flex-col gap-1">
+                                                                    <Button size="sm" className="w-full h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleFoodStatusChange(order.id, true)}>
                                                                         <CheckCircle2 className="h-3 w-3 mr-1" /> Makanan Selesai
                                                                     </Button>
                                                                     {canHold && (foodHold ? (
-                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-yellow-500 text-yellow-600 bg-yellow-50 hover:bg-yellow-100 hover:text-yellow-700" onClick={() => handleResume(order.id, "food")} title="Lanjutkan Makanan">
-                                                                            <RefreshCw className="h-3.5 w-3.5" />
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-yellow-500 hover:bg-yellow-600 text-white" onClick={() => handleResume(order.id, "food")}>
+                                                                            <RefreshCw className="h-3 w-3 mr-1" /> Lanjutkan Makanan
                                                                         </Button>
                                                                     ) : (
-                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-orange-300 text-orange-500 hover:bg-orange-50 hover:text-orange-600" onClick={() => { setHoldTarget({ order, type: "food" }); setHoldReason(""); }} title="Tahan Makanan">
-                                                                            <Clock className="h-3.5 w-3.5" />
+                                                                        <Button size="sm" variant="outline" className="w-full h-7 text-xs border-yellow-400 text-yellow-600 hover:bg-yellow-50 hover:text-yellow-700" onClick={() => { setHoldTarget({ order, type: "food" }); setHoldReason(""); }}>
+                                                                            <Clock className="h-3 w-3 mr-1" /> Tahan Makanan
                                                                         </Button>
                                                                     ))}
                                                                 </div>
@@ -920,17 +920,17 @@ const QueuePage = () => {
                                                                     <Undo2 className="h-3 w-3 mr-1" /> Batalkan Selesai
                                                                 </Button>
                                                             ) : (
-                                                                <div className="flex gap-1">
-                                                                    <Button size="sm" className="flex-1 h-7 text-xs bg-blue-500 hover:bg-blue-600 text-white" onClick={() => handleDrinkStatusChange(order.id, true)}>
+                                                                <div className="flex flex-col gap-1">
+                                                                    <Button size="sm" className="w-full h-7 text-xs bg-blue-500 hover:bg-blue-600 text-white" onClick={() => handleDrinkStatusChange(order.id, true)}>
                                                                         <CheckCircle2 className="h-3 w-3 mr-1" /> Minuman Selesai
                                                                     </Button>
                                                                     {canHold && (drinkHold ? (
-                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700" onClick={() => handleResume(order.id, "drink")} title="Lanjutkan Minuman">
-                                                                            <RefreshCw className="h-3.5 w-3.5" />
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-slate-500 hover:bg-slate-600 text-white" onClick={() => handleResume(order.id, "drink")}>
+                                                                            <RefreshCw className="h-3 w-3 mr-1" /> Lanjutkan Minuman
                                                                         </Button>
                                                                     ) : (
-                                                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600" onClick={() => { setHoldTarget({ order, type: "drink" }); setHoldReason(""); }} title="Tahan Minuman">
-                                                                            <Clock className="h-3.5 w-3.5" />
+                                                                        <Button size="sm" variant="outline" className="w-full h-7 text-xs border-slate-400 text-slate-600 hover:bg-slate-100 hover:text-slate-700" onClick={() => { setHoldTarget({ order, type: "drink" }); setHoldReason(""); }}>
+                                                                            <Clock className="h-3 w-3 mr-1" /> Tahan Minuman
                                                                         </Button>
                                                                     ))}
                                                                 </div>
