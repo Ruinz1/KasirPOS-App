@@ -703,7 +703,7 @@ const QueuePage = () => {
                                                 foodCompleted
                                                     ? 'border-green-500 bg-green-50/50 dark:bg-green-950/10 opacity-75'
                                                     : foodHold
-                                                        ? 'border-yellow-500 bg-yellow-50/80 dark:bg-yellow-950/20 ring-2 ring-yellow-400/40 opacity-90'
+                                                        ? 'border-red-500 bg-red-50/80 dark:bg-red-950/20 ring-2 ring-red-400/40 opacity-90'
                                                         : hasVisibleAddons
                                                             ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-500/20'
                                                             : order.queue_status === 'in_progress'
@@ -735,13 +735,13 @@ const QueuePage = () => {
                                                     </div>
                                                     {/* Alasan hold makanan */}
                                                     {foodHold && order.hold_reason && (
-                                                        <div className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 text-xs p-2 rounded mb-2 font-medium border border-yellow-300 dark:border-yellow-700">
+                                                        <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-xs p-2 rounded mb-2 font-medium border border-red-300 dark:border-red-700">
                                                             <span className="font-bold">⏸ Alasan Hold:</span> {order.hold_reason}
                                                         </div>
                                                     )}
                                                     {/* Daftar Makanan */}
-                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ foodCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : foodHold ? 'border-yellow-400 bg-yellow-50/60 dark:bg-yellow-950/10' : 'border-orange-300 bg-orange-50/50 dark:bg-orange-950/10'}`}>
-                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ foodCompleted ? 'bg-green-500' : foodHold ? 'bg-yellow-500' : 'bg-orange-400'}`}>
+                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ foodCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : foodHold ? 'border-red-400 bg-red-50/60 dark:bg-red-950/10' : 'border-orange-300 bg-orange-50/50 dark:bg-orange-950/10'}`}>
+                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ foodCompleted ? 'bg-green-500' : foodHold ? 'bg-red-500' : 'bg-orange-400'}`}>
                                                             <Utensils className="h-3 w-3" />
                                                             <span>MAKANAN</span>
                                                             {foodCompleted && <span className="text-[10px] bg-white/20 px-1 rounded">✓ Selesai</span>}
@@ -862,7 +862,7 @@ const QueuePage = () => {
                                                 drinkCompleted
                                                     ? 'border-green-500 bg-green-50/50 dark:bg-green-950/10 opacity-75'
                                                     : drinkHold
-                                                        ? 'border-slate-400 bg-slate-50 dark:bg-slate-900/30 ring-2 ring-slate-400/40 opacity-90'
+                                                        ? 'border-red-500 bg-red-50/80 dark:bg-red-950/20 ring-2 ring-red-400/40 opacity-90'
                                                         : hasVisibleAddons
                                                             ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-500/20'
                                                             : 'border-blue-400 bg-blue-50 dark:bg-blue-950/20'
@@ -892,13 +892,13 @@ const QueuePage = () => {
                                                     </div>
                                                     {/* Alasan hold minuman (terpisah dari makanan) */}
                                                     {drinkHold && order.drink_hold_reason && (
-                                                        <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded mb-2 font-medium border border-slate-300 dark:border-slate-600">
+                                                        <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-xs p-2 rounded mb-2 font-medium border border-red-300 dark:border-red-700">
                                                             <span className="font-bold">⏸ Alasan Hold:</span> {order.drink_hold_reason}
                                                         </div>
                                                     )}
                                                     {/* Daftar Minuman */}
-                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ drinkCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : drinkHold ? 'border-slate-400 bg-slate-50/60 dark:bg-slate-900/20' : 'border-blue-300 bg-blue-50/50 dark:bg-blue-950/10'}`}>
-                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ drinkCompleted ? 'bg-green-500' : drinkHold ? 'bg-slate-500' : 'bg-blue-500'}`}>
+                                                    <div className={`mb-2 rounded-lg border-2 overflow-hidden ${ drinkCompleted ? 'border-green-400 bg-green-50/70 dark:bg-green-950/20' : drinkHold ? 'border-red-400 bg-red-50/60 dark:bg-red-950/10' : 'border-blue-300 bg-blue-50/50 dark:bg-blue-950/10'}`}>
+                                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white ${ drinkCompleted ? 'bg-green-500' : drinkHold ? 'bg-red-500' : 'bg-blue-500'}`}>
                                                             <Coffee className="h-3 w-3" />
                                                             <span>MINUMAN</span>
                                                             {drinkCompleted && <span className="text-[10px] bg-white/20 px-1 rounded">✓ Selesai</span>}
