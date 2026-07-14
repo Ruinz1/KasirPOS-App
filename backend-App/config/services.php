@@ -36,9 +36,19 @@ return [
     ],
 
     'whatsapp' => [
+        // "meta" = langsung ke Meta WhatsApp Cloud API, "gateway" = via chat.api.co.id
+        'provider' => env('WHATSAPP_PROVIDER', 'gateway'),
+
         'base_url' => env('WHATSAPP_API_BASE_URL', 'https://chat.api.co.id'),
         'api_key' => env('WHATSAPP_API_KEY'),
         'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
+
+        'meta' => [
+            'graph_url' => env('WHATSAPP_META_GRAPH_URL', 'https://graph.facebook.com/v21.0'),
+            'access_token' => env('WHATSAPP_META_ACCESS_TOKEN'),
+            'phone_number_id' => env('WHATSAPP_META_PHONE_NUMBER_ID'),
+            'business_account_id' => env('WHATSAPP_META_WABA_ID'),
+        ],
     ],
 
 ];

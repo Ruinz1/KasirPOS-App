@@ -8,7 +8,7 @@ use App\Models\OrderItem;
 use App\Models\MenuItem;
 use App\Models\InventoryItem;
 use App\Models\Member;
-use App\Services\WhatsAppNotifier;
+use App\Services\MemberPointsMessage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -246,6 +246,7 @@ class OrderController extends Controller
             'customer_name' => 'nullable|string|max:255',
             'member_id' => 'nullable|exists:members,id',
             'points_redeemed' => 'nullable|integer|min:0',
+            'send_points_wa' => 'nullable|boolean',
             'payment_method' => 'nullable|in:cash,card,qris',
             'payment_status' => 'nullable|in:paid,pending',
             'order_type' => 'required|in:dine_in,takeaway',
@@ -421,13 +422,10 @@ class OrderController extends Controller
 
             DB::commit();
 
-            if ($member && $order->payment_status === 'paid' && $order->points_earned > 0) {
-                WhatsAppNotifier::sendTemplate($member->phone, 'points_earned', [
-                    $member->name,
-                    number_format($order->total, 0, ',', '.'),
-                    $order->points_earned,
-                    $member->total_points,
-                ]);
+            $sendPointsWa = $validated['send_points_wa'] ?? true;
+            if ($sendPointsWa && $member && $order->payment_status === 'paid' && $order->points_earned > 0) {
+                $storeName = $order->store->name ?? 'toko kami';
+                MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, (int) $order->points_earned);
             }
 
             $order->load(['items.menuItem', 'user', 'member']);
@@ -468,6 +466,7 @@ class OrderController extends Controller
             'paid_amount' => 'nullable|numeric|min:0',
             'second_payment_method' => 'nullable|in:cash,card,qris',
             'second_paid_amount' => 'nullable|numeric|min:0',
+            'send_points_wa' => 'nullable|boolean',
         ]);
 
         // Determine contexts
@@ -554,12 +553,10 @@ class OrderController extends Controller
                     $order->points_earned = $pointsEarned;
                     $order->save();
 
-                    WhatsAppNotifier::sendTemplate($member->phone, 'points_earned', [
-                        $member->name,
-                        number_format($order->total, 0, ',', '.'),
-                        $pointsEarned,
-                        $member->total_points,
-                    ]);
+                    if ($validated['send_points_wa'] ?? true) {
+                        $storeName = $order->store->name ?? 'toko kami';
+                        MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, $pointsEarned);
+                    }
                 }
             }
         }
@@ -1054,5 +1051,58 @@ class OrderController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Heatmap data: jumlah order & total revenue per jam dalam N hari terakhir.
+     * GET /api/orders/report/hourly-heatmap?days=7&store_id=
+     */
+    public function hourlyHeatmap(Request $request)
+    {
+        $days = (int) $request->get('days', 7);
+        if (!in_array($days, [7, 14, 30])) {
+            $days = 7;
+        }
+
+        $query = Order::where('status', '!=', 'cancelled')
+            ->where('created_at', '>=', now()->subDays($days)->startOfDay());
+
+        // Filter by store for non-owner (owner sees own store automatically via BelongsToStore)
+        if ($request->has('store_id') && $request->user()->role === 'admin') {
+            $query->where('store_id', $request->store_id);
+        } elseif ($request->user()->role !== 'admin') {
+            // Owner & kasir — scope to their store
+            $storeId = $request->user()->store_id;
+            if ($storeId) {
+                $query->where('store_id', $storeId);
+            }
+        }
+
+        $orders = $query->select('created_at', 'total')->get();
+
+        // Build hour buckets 0–23, always initialize all
+        $buckets = [];
+        for ($h = 0; $h < 24; $h++) {
+            $buckets[$h] = ['hour' => $h, 'orders' => 0, 'revenue' => 0];
+        }
+
+        foreach ($orders as $order) {
+            // Use local time (server timezone configured in .env APP_TIMEZONE)
+            $hour = (int) $order->created_at->format('G');
+            $buckets[$hour]['orders']++;
+            $buckets[$hour]['revenue'] += (float) $order->total;
+        }
+
+        $result = array_values($buckets);
+
+        // Attach peak & quiet stats for frontend
+        $maxOrders = max(array_column($result, 'orders')) ?: 1;
+
+        return response()->json([
+            'heatmap'    => $result,
+            'max_orders' => $maxOrders,
+            'days'       => $days,
+            'total_days_orders' => $orders->count(),
+        ]);
     }
 }

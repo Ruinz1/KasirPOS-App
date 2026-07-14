@@ -28,3 +28,7 @@ POS Printer Driver Setup.exe
 # Temporary files
 *.tmp
 *.temp
+
+# Local AI settings
+.claude/
+

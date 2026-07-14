@@ -110,7 +110,10 @@ class MemberController extends Controller
         ]);
 
         $storeName = $request->user()->store->name ?? 'toko kami';
-        WhatsAppNotifier::sendTemplate($member->phone, 'member_welcome', [$member->name, $storeName]);
+        WhatsAppNotifier::sendTemplate($member->phone, 'member_baru', [
+            'customer_name' => $member->name,
+            'bakso_bento_malang' => $storeName,
+        ]);
 
         return response()->json($member, 201);
     }
@@ -158,6 +161,43 @@ class MemberController extends Controller
         $member->delete();
 
         return response()->json(['message' => 'Member berhasil dihapus']);
+    }
+
+    /**
+     * Kirim info poin + daftar reward ke WhatsApp member.
+     * Utama: template "info_poin". Fallback: pesan teks bebas
+     * (hanya berhasil jika member chat duluan <24 jam / template belum disetujui).
+     */
+    public function sendPointsInfo(Request $request, Member $member)
+    {
+        $this->authorizeStore($request, $member);
+
+        $storeName = $request->user()->store->name ?? 'toko kami';
+        $rewardList = \App\Services\MemberPointsMessage::rewardList($member->store_id, (int) $member->total_points);
+
+        $sent = WhatsAppNotifier::sendTemplate($member->phone, 'info_poin', [
+            'customer_name' => $member->name,
+            'nama_toko' => $storeName,
+            'total_poin' => (string) $member->total_points,
+            'daftar_reward' => $rewardList,
+        ]);
+
+        if ($sent) {
+            return response()->json(['message' => 'Info poin terkirim via template WhatsApp', 'method' => 'template']);
+        }
+
+        $text = "Halo {$member->name}! Poin Anda di {$storeName} saat ini: {$member->total_points} poin.\n\n"
+            . "Setiap belanja Rp 10.000 = 1 poin.\n\n"
+            . "Poin bisa ditukar dengan: {$rewardList}.\n\n"
+            . "Tunjukkan pesan ini ke kasir untuk menukar poin Anda. Terima kasih!";
+
+        if (WhatsAppNotifier::sendText($member->phone, $text)) {
+            return response()->json(['message' => 'Template belum aktif, info poin terkirim sebagai pesan teks', 'method' => 'text']);
+        }
+
+        return response()->json([
+            'message' => 'Gagal mengirim WhatsApp. Template mungkin belum disetujui dan member belum pernah chat ke nomor bisnis dalam 24 jam terakhir.',
+        ], 502);
     }
 
     public function findByPhone(Request $request)

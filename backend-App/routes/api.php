@@ -58,6 +58,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/orders/{order}/details', [OrderController::class, 'updateOrderDetails']);
     Route::delete('/orders/{order}', [OrderController::class, 'destroy']);
     Route::get('/orders/report/sales', [OrderController::class, 'salesReport']);
+    Route::get('/orders/report/hourly-heatmap', [OrderController::class, 'hourlyHeatmap']);
 
     // Table routes (all authenticated users can view, only admin/owner can modify)
     Route::get('/tables', [TableController::class, 'index']);
@@ -128,6 +129,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/members/{member}', [MemberController::class, 'update']);
     Route::delete('/members/{member}', [MemberController::class, 'destroy']);
     Route::get('/members/{member}/transactions', [MemberController::class, 'transactions']);
+    Route::post('/members/{member}/send-points-info', [MemberController::class, 'sendPointsInfo']);
 
     // Point Rewards routes
     Route::get('/point-rewards', [PointRewardController::class, 'index']);

@@ -77,6 +77,66 @@ interface PopularMenuData {
   sales: number;
 }
 
+interface HourlyBucket {
+  hour: number;
+  orders: number;
+  revenue: number;
+}
+
+interface HeatmapData {
+  heatmap: HourlyBucket[];
+  max_orders: number;
+  days: number;
+  total_days_orders: number;
+}
+
+// ─── Heatmap Cell Component ──────────────────────────────────────────────────
+const HeatmapCell = ({
+  bucket,
+  maxOrders,
+  themeColor,
+}: {
+  bucket: HourlyBucket;
+  maxOrders: number;
+  themeColor: string;
+}) => {
+  const intensity = maxOrders > 0 ? bucket.orders / maxOrders : 0;
+
+  const getBgStyle = (): React.CSSProperties => {
+    if (intensity === 0) return { backgroundColor: 'transparent', border: '1px solid rgba(128,128,128,0.15)' };
+    const opacity = 0.08 + intensity * 0.87;
+    return { backgroundColor: themeColor, opacity };
+  };
+
+  const label = bucket.hour === 0 ? '12am'
+    : bucket.hour < 12 ? `${bucket.hour}am`
+    : bucket.hour === 12 ? '12pm'
+    : `${bucket.hour - 12}pm`;
+
+  return (
+    <div className="relative group flex flex-col items-center">
+      <div
+        className="w-full rounded-md cursor-default transition-transform duration-100 group-hover:scale-110"
+        style={{ height: '36px', ...getBgStyle() }}
+        title={`${label}: ${bucket.orders} pesanan`}
+      />
+      {/* Tooltip */}
+      <div className="absolute -top-16 left-1/2 -translate-x-1/2 z-20 hidden group-hover:flex flex-col items-center pointer-events-none">
+        <div className="bg-gray-900 text-white text-[11px] rounded-lg px-2.5 py-1.5 whitespace-nowrap shadow-xl">
+          <div className="font-bold">{label}</div>
+          <div>{bucket.orders} pesanan</div>
+          {bucket.orders > 0 && (
+            <div className="opacity-70">{formatCurrency(bucket.revenue)}</div>
+          )}
+        </div>
+        <div className="border-4 border-transparent border-t-gray-900" />
+      </div>
+      {/* Hour label */}
+      <span className="text-[9px] text-muted-foreground mt-1 tabular-nums leading-none">{label}</span>
+    </div>
+  );
+};
+
 export default function Dashboard() {
   const { user, isKaryawan, canEdit, isAdmin } = useAuth();
   const themeColor = useThemeColor();
@@ -86,6 +146,11 @@ export default function Dashboard() {
   const [salesData, setSalesData] = useState<SalesChartData[]>([]);
   const [popularMenuData, setPopularMenuData] = useState<PopularMenuData[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Heatmap state
+  const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
+  const [heatmapDays, setHeatmapDays] = useState<'7' | '14' | '30'>('7');
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
 
   // Admin Filters
   const [stores, setStores] = useState<Store[]>([]);
@@ -101,12 +166,33 @@ export default function Dashboard() {
     fetchDashboardData();
   }, [selectedStoreId]);
 
+  // Fetch heatmap whenever days or store changes
+  useEffect(() => {
+    fetchHeatmap();
+  }, [heatmapDays, selectedStoreId]);
+
   const fetchStores = async () => {
     try {
       const response = await api.get('/stores-management');
       setStores(response.data.data || []);
     } catch (error) {
       console.error('Failed to fetch stores:', error);
+    }
+  };
+
+  const fetchHeatmap = async () => {
+    setHeatmapLoading(true);
+    try {
+      const params: Record<string, string> = { days: heatmapDays };
+      if (isAdmin() && selectedStoreId !== 'all') {
+        params.store_id = selectedStoreId;
+      }
+      const res = await api.get('/orders/report/hourly-heatmap', { params });
+      setHeatmapData(res.data);
+    } catch (e) {
+      console.error('Heatmap fetch error', e);
+    } finally {
+      setHeatmapLoading(false);
     }
   };
 
@@ -165,16 +251,10 @@ export default function Dashboard() {
 
         try {
           const empRes = await api.get('/employees', { params: baseParams });
-          console.log('Employee API Response:', empRes.data);
-          console.log('Employee Response Type:', typeof empRes.data, Array.isArray(empRes.data));
-          console.log('Employee Count:', empRes.data?.length || 0);
-          console.log('Base Params:', baseParams);
-
           // Ensure empRes.data is an array
           if (Array.isArray(empRes.data)) {
             dashStats.total_employees = empRes.data.length;
           } else {
-            console.warn('Employee response is not an array:', empRes.data);
             dashStats.total_employees = 0;
           }
         } catch (error) {
@@ -184,7 +264,6 @@ export default function Dashboard() {
       }
 
       // Set stats AFTER all data is fetched
-      console.log('Final dashStats:', dashStats);
       setStats(dashStats);
 
       // --- Chart Data Processing ---
@@ -197,32 +276,22 @@ export default function Dashboard() {
         const chartOrders = chartOrdersRes.data;
 
         // 1. Sales Trend (Daily)
-        // 1. Sales Trend (Daily)
-        const salesTrendMap = new Map<string, number>();
         const salesTrendDisplay: { name: string; total: number; date: Date }[] = [];
 
         // Initialize last 7 days including today
         for (let i = 6; i >= 0; i--) {
           const d = new Date();
           d.setDate(d.getDate() - i);
-          const dateKey = d.toISOString().split('T')[0]; // YYYY-MM-DD
-          salesTrendMap.set(dateKey, 0);
-
           salesTrendDisplay.push({
             name: d.toLocaleDateString('id-ID', { weekday: 'short' }),
             total: 0,
-            date: d // Store date object for comparison
+            date: d 
           });
         }
 
         chartOrders.forEach((o: any) => {
-          // Skip cancelled orders
           if (o.status === 'cancelled') return;
-
           const d = new Date(o.created_at);
-          const dateKey = d.toISOString().split('T')[0]; // Match by date part only
-
-          // Fallback check if timezone makes dates mismatch slightly, compare day/month/year
           const matchingEntry = salesTrendDisplay.find(entry =>
             entry.date.getDate() === d.getDate() &&
             entry.date.getMonth() === d.getMonth() &&
@@ -235,22 +304,15 @@ export default function Dashboard() {
           }
         });
 
-        // Clean up data for chart
-        const salesChartData = salesTrendDisplay.map(({ name, total }) => ({ name, total }));
-        setSalesData(salesChartData);
+        setSalesData(salesTrendDisplay.map(({ name, total }) => ({ name, total })));
 
         // 2. Popular Menu (Profit Based)
-        // Aggregate by menu_item name
         const menuStats: Record<string, { profit: number, sales: number }> = {};
-
         chartOrders.forEach((o: any) => {
-          // Skip cancelled orders
           if (o.status === 'cancelled') return;
-
           o.items.forEach((item: any) => {
-            if (!item.menu_item) return; // Skip if menu item deleted
+            if (!item.menu_item) return;
             const menuName = item.menu_item.name;
-
             if (!menuStats[menuName]) {
               menuStats[menuName] = { profit: 0, sales: 0 };
             }
@@ -259,13 +321,10 @@ export default function Dashboard() {
           });
         });
 
-        // Convert to array and sort by Sales
-        const popularMenu = Object.entries(menuStats)
+        setPopularMenuData(Object.entries(menuStats)
           .map(([name, stat]) => ({ name, ...stat }))
           .sort((a, b) => b.sales - a.sales)
-          .slice(0, 5); // Top 5
-
-        setPopularMenuData(popularMenu);
+          .slice(0, 5));
 
       } catch (e) {
         console.error("Chart data error", e);
@@ -409,7 +468,6 @@ export default function Dashboard() {
 
             {/* Top Stats Row */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {/* PROFIT CARD - Highlighted */}
               <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary to-primary/80 text-primary-foreground p-6 shadow-lg transform transition-all hover:scale-[1.02]">
                 <div className="relative z-10 flex flex-col justify-between h-full">
                   <div className="flex items-start justify-between">
@@ -427,7 +485,6 @@ export default function Dashboard() {
                     Performence yang baik!
                   </div>
                 </div>
-                {/* Decor */}
                 <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-primary-foreground/10 rounded-full blur-2xl"></div>
               </div>
 
@@ -461,6 +518,108 @@ export default function Dashboard() {
                   </p>
                 )}
               </div>
+            </div>
+
+            {/* ── Heatmap Jam Sibuk ───────────────────────────────────── */}
+            <div className="card-elevated p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <div>
+                  <h3 className="font-display font-semibold text-lg">🔥 Heatmap Jam Sibuk</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Jam paling ramai berdasarkan jumlah pesanan
+                    {heatmapData && (
+                      <span className="ml-2 text-xs font-medium text-primary">
+                        — Total {heatmapData.total_days_orders} pesanan dalam {heatmapData.days} hari
+                      </span>
+                    )}
+                  </p>
+                </div>
+                {/* Period selector */}
+                <div className="flex items-center gap-1 bg-muted rounded-lg p-1 self-start sm:self-auto">
+                  {(['7', '14', '30'] as const).map(d => (
+                    <button
+                      key={d}
+                      onClick={() => setHeatmapDays(d)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                        heatmapDays === d
+                          ? 'bg-background shadow text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {d}H
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {heatmapLoading ? (
+                <div className="flex items-center justify-center h-24">
+                  <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : heatmapData ? (
+                <>
+                  {/* Heatmap grid — 24 columns */}
+                  <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}>
+                    {heatmapData.heatmap.map(bucket => (
+                      <HeatmapCell
+                        key={bucket.hour}
+                        bucket={bucket}
+                        maxOrders={heatmapData.max_orders}
+                        themeColor={themeColor}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex items-center justify-end gap-2 mt-4">
+                    <span className="text-xs text-muted-foreground">Sepi</span>
+                    <div className="flex gap-0.5">
+                      {[0.08, 0.25, 0.45, 0.65, 0.87].map((op, i) => (
+                        <div
+                          key={i}
+                          className="w-4 h-4 rounded-sm"
+                          style={{ backgroundColor: themeColor, opacity: op }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-xs text-muted-foreground">Ramai</span>
+                  </div>
+
+                  {/* Peak & Quiet hours summary */}
+                  {(() => {
+                    const sorted = [...heatmapData.heatmap].sort((a, b) => b.orders - a.orders);
+                    const peak = sorted[0];
+                    const quiet = sorted.filter(b => b.orders === 0);
+                    const toLabel = (h: number) =>
+                      h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
+                    return (
+                      <div className="grid grid-cols-2 gap-3 mt-4">
+                        <div className="flex items-center gap-3 p-3 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800/40">
+                          <span className="text-2xl">🔥</span>
+                          <div>
+                            <p className="text-xs text-muted-foreground font-medium">Jam Tersibuk</p>
+                            <p className="font-bold text-orange-600 dark:text-orange-400">
+                              {toLabel(peak.hour)}{' '}
+                              <span className="font-normal text-sm">({peak.orders} pesanan)</span>
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 p-3 rounded-xl bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40">
+                          <span className="text-2xl">😴</span>
+                          <div>
+                            <p className="text-xs text-muted-foreground font-medium">Jam Sepi</p>
+                            <p className="font-bold text-blue-600 dark:text-blue-400">
+                              {quiet.length} jam kosong
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
+              ) : (
+                <p className="text-center py-8 text-muted-foreground text-sm">Gagal memuat data heatmap</p>
+              )}
             </div>
 
             {/* Charts Section */}

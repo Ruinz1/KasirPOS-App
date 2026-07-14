@@ -26,7 +26,8 @@ import {
   ArrowDownAZ,
   ArrowUpDown,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  MessageCircle
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -98,6 +99,7 @@ interface Order {
   id: number;
   daily_number?: number;
   customer_name: string;
+  member_id?: number | null;
   total: number;
   cogs: number;
   profit: number;
@@ -142,6 +144,7 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'qris'>('cash');
   const [orderType, setOrderType] = useState<'dine_in' | 'takeaway'>('dine_in');
   const [paidAmount, setPaidAmount] = useState<string>('');
+  const [sendPointsWa, setSendPointsWa] = useState(true); // kirim info poin via WhatsApp setelah bayar
   const [loading, setLoading] = useState(true);
 
   const [showPendingList, setShowPendingList] = useState(false);
@@ -964,6 +967,7 @@ export default function POSPage() {
           payment_status: paymentStatus,
           order_type: orderType,
           paid_amount: paymentStatus === 'paid' ? (paidAmount ? parseFloat(paidAmount) : null) : null,
+          send_points_wa: sendPointsWa,
           items: formatOrderItemsPayload(cart),
         };
 
@@ -1009,6 +1013,7 @@ export default function POSPage() {
     setSettlingOrder(order);
     setPaymentMethod(order.payment_method as any || 'cash');
     setPaidAmount('');
+    setSendPointsWa(true);
     // Open settlement dialog (reuse payment dialog or create new one?)
     // Let's reuse Logic but inside a specific settlement confirmation
   };
@@ -1039,7 +1044,8 @@ export default function POSPage() {
       const payload = {
         payment_status: 'paid',
         payment_method: paymentMethod,
-        paid_amount: currentInput
+        paid_amount: currentInput,
+        send_points_wa: sendPointsWa
       };
 
       const response = await api.put(`/orders/${settlingOrder.id}`, payload);
@@ -1292,6 +1298,29 @@ export default function POSPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* Opsi kirim info poin via WhatsApp (hanya pesanan member) */}
+                  {settlingOrder.member_id && (
+                    <div className="flex items-center justify-between p-3 rounded-xl border-2 border-green-200 bg-green-50/50">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MessageCircle className="w-5 h-5 text-green-600 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">Kirim Info Poin via WA</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            Poin & reward dikirim ke member setelah lunas
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setSendPointsWa(!sendPointsWa)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${sendPointsWa ? 'bg-green-600' : 'bg-muted'}`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sendPointsWa ? 'translate-x-6' : 'translate-x-1'}`}
+                        />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Split Bill Toggle */}
                   <div className={`flex items-center justify-center gap-3 p-4 rounded-xl ${((settlingOrder.paid_amount || 0) > 0) ? 'bg-muted/10 opacity-60' : 'bg-muted/30'}`}>
@@ -1703,7 +1732,8 @@ export default function POSPage() {
                               payment_method: splitPayment1Method,
                               paid_amount: amount1,
                               second_payment_method: splitPayment2Method,
-                              second_paid_amount: amount2
+                              second_paid_amount: amount2,
+                              send_points_wa: sendPointsWa
                             };
 
                             await api.put(`/orders/${settlingOrder.id}`, payload);
@@ -2361,6 +2391,7 @@ export default function POSPage() {
                   } else if (addToOrderId) {
                     handleCheckout('paid');
                   } else {
+                    setSendPointsWa(true);
                     setShowPayment(true);
                   }
                 }}
@@ -2501,6 +2532,29 @@ export default function POSPage() {
                   {paidAmount && parseFloat(paidAmount) < cartTotal && (
                     <p className="text-sm text-destructive mt-2">Uang tidak cukup</p>
                   )}
+                </div>
+              )}
+
+              {/* Opsi kirim info poin via WhatsApp (hanya jika transaksi atas nama member) */}
+              {selectedMember && !editingOrderId && !addToOrderId && (
+                <div className="flex items-center justify-between p-3 mb-6 rounded-xl border-2 border-green-200 bg-green-50/50">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MessageCircle className="w-5 h-5 text-green-600 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">Kirim Info Poin via WA</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        Poin & reward dikirim ke {selectedMember.name} setelah lunas
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSendPointsWa(!sendPointsWa)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${sendPointsWa ? 'bg-green-600' : 'bg-muted'}`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sendPointsWa ? 'translate-x-6' : 'translate-x-1'}`}
+                    />
+                  </button>
                 </div>
               )}
 

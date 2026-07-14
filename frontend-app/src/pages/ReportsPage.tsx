@@ -304,7 +304,7 @@ export default function ReportsPage() {
           // Extract variant from note
           const noteText = item.note || '';
           const isBakso = name.toLowerCase().includes('bakso');
-          
+
           let displayVariant = '';
           if (isBakso) {
             const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/i);
@@ -502,7 +502,7 @@ export default function ReportsPage() {
     }
   };
 
-  const DAILY_TARGET = 2500000;
+  const DAILY_TARGET = 6000000;
 
   const getTargetAnalysis = () => {
     if (!stats) return { target: 0, sales: 0, achieved: false, percentage: 0, days: 0 };
@@ -635,15 +635,15 @@ export default function ReportsPage() {
         // Extract variants from note
         const noteText = item.note || '';
         const isBaksoMenu = baseMenuName.toLowerCase().includes('bakso');
-        
+
         let kuahVariant = '';
         let baksoType = '';
         let otherVariant = '';
-        
+
         if (isBaksoMenu) {
           const kuahMatch = noteText.match(/Kuah:\s*([^.]+)/i);
           kuahVariant = kuahMatch ? kuahMatch[1].trim() : '';
-          
+
           const typeMatch = noteText.match(/Tipe:\s*([^.]+)/i);
           baksoType = typeMatch ? typeMatch[1].trim() : '';
         } else {
@@ -2200,103 +2200,103 @@ export default function ReportsPage() {
                   <p className="text-sm">Tidak ada data yang sesuai filter</p>
                 </div>
               ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border bg-secondary/20">
-                      <th className="text-left py-3 px-4 text-sm font-semibold">Nama Menu</th>
-                      <th className="text-left py-3 px-4 text-sm font-semibold">Variasi</th>
-                      <th className="text-left py-3 px-4 text-sm font-semibold">Tipe</th>
-                      <th className="text-left py-3 px-4 text-sm font-semibold">Pembayaran</th>
-                      <th className="text-right py-3 px-4 text-sm font-semibold">Terjual</th>
-                      <th className="text-right py-3 px-4 text-sm font-semibold">Total Penjualan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {grouped.map((group, gIdx) => {
-                      const groupTotal = group.items.reduce((a: number, i: any) => a + i.total, 0);
-                      const groupQty = group.items.reduce((a: number, i: any) => a + i.quantity, 0);
-                      const isMultiRow = group.items.length > 1;
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border bg-secondary/20">
+                        <th className="text-left py-3 px-4 text-sm font-semibold">Nama Menu</th>
+                        <th className="text-left py-3 px-4 text-sm font-semibold">Variasi</th>
+                        <th className="text-left py-3 px-4 text-sm font-semibold">Tipe</th>
+                        <th className="text-left py-3 px-4 text-sm font-semibold">Pembayaran</th>
+                        <th className="text-right py-3 px-4 text-sm font-semibold">Terjual</th>
+                        <th className="text-right py-3 px-4 text-sm font-semibold">Total Penjualan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {grouped.map((group, gIdx) => {
+                        const groupTotal = group.items.reduce((a: number, i: any) => a + i.total, 0);
+                        const groupQty = group.items.reduce((a: number, i: any) => a + i.quantity, 0);
+                        const isMultiRow = group.items.length > 1;
 
-                      return (
-                        <React.Fragment key={`grp-${gIdx}`}>
-                          {/* Group header row: shown when menu has multiple variant/tipe rows */}
-                          {isMultiRow && (
-                            <tr key={`group-${gIdx}`} className="bg-secondary/20 border-t-2 border-border">
-                              <td className="py-2 px-4 text-sm font-bold text-foreground" colSpan={4}>
-                                🍽️ {group.name}
-                              </td>
-                              <td className="py-2 px-4 text-sm text-right font-bold text-muted-foreground">{groupQty}</td>
-                              <td className="py-2 px-4 text-sm text-right font-bold text-success">{formatCurrency(groupTotal)}</td>
-                            </tr>
-                          )}
-                          {/* Sub-rows per variant + packaging type + payment */}
-                          {group.items.map((item: any, iIdx: number) => (
-                            <tr
-                              key={`${gIdx}-${iIdx}`}
-                              className={`border-b border-border/60 hover:bg-secondary/50 ${isMultiRow ? 'bg-background' : ''}`}
-                            >
-                              {/* Show menu name only if single row (no grouping header) */}
-                              {!isMultiRow ? (
-                                <td className="py-3 px-4 text-sm font-medium">{item.name}</td>
-                              ) : (
-                                <td className="py-2.5 px-4 text-sm text-muted-foreground pl-8">↳</td>
-                              )}
-                              <td className="py-2.5 px-4 text-sm">
-                                {item.kuahVariant ? (
-                                  item.name.toLowerCase().includes('bakso') ? (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border border-orange-200 dark:border-orange-700/50">
-                                      🍜 {item.kuahVariant}
+                        return (
+                          <React.Fragment key={`grp-${gIdx}`}>
+                            {/* Group header row: shown when menu has multiple variant/tipe rows */}
+                            {isMultiRow && (
+                              <tr key={`group-${gIdx}`} className="bg-secondary/20 border-t-2 border-border">
+                                <td className="py-2 px-4 text-sm font-bold text-foreground" colSpan={4}>
+                                  🍽️ {group.name}
+                                </td>
+                                <td className="py-2 px-4 text-sm text-right font-bold text-muted-foreground">{groupQty}</td>
+                                <td className="py-2 px-4 text-sm text-right font-bold text-success">{formatCurrency(groupTotal)}</td>
+                              </tr>
+                            )}
+                            {/* Sub-rows per variant + packaging type + payment */}
+                            {group.items.map((item: any, iIdx: number) => (
+                              <tr
+                                key={`${gIdx}-${iIdx}`}
+                                className={`border-b border-border/60 hover:bg-secondary/50 ${isMultiRow ? 'bg-background' : ''}`}
+                              >
+                                {/* Show menu name only if single row (no grouping header) */}
+                                {!isMultiRow ? (
+                                  <td className="py-3 px-4 text-sm font-medium">{item.name}</td>
+                                ) : (
+                                  <td className="py-2.5 px-4 text-sm text-muted-foreground pl-8">↳</td>
+                                )}
+                                <td className="py-2.5 px-4 text-sm">
+                                  {item.kuahVariant ? (
+                                    item.name.toLowerCase().includes('bakso') ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border border-orange-200 dark:border-orange-700/50">
+                                        🍜 {item.kuahVariant}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-700/50">
+                                        🥤 {item.kuahVariant}
+                                      </span>
+                                    )
+                                  ) : (
+                                    <span className="text-muted-foreground text-xs italic">-</span>
+                                  )}
+                                </td>
+                                {/* Packaging type badge */}
+                                <td className="py-2.5 px-4 text-sm">
+                                  {item.packagingType === 'Dibungkus' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50">
+                                      📦 Dibungkus
                                     </span>
                                   ) : (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-700/50">
-                                      🥤 {item.kuahVariant}
+                                      🍽️ Makan Disini
                                     </span>
-                                  )
-                                ) : (
-                                  <span className="text-muted-foreground text-xs italic">-</span>
-                                )}
-                              </td>
-                              {/* Packaging type badge */}
-                              <td className="py-2.5 px-4 text-sm">
-                                {item.packagingType === 'Dibungkus' ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50">
-                                    📦 Dibungkus
+                                  )}
+                                </td>
+                                {/* Payment Method badge */}
+                                <td className="py-2.5 px-4 text-sm">
+                                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${pmColors[item.paymentMethod] || 'bg-secondary text-foreground border-border'}`}>
+                                    {pmLabels[item.paymentMethod] || item.paymentMethod || '-'}
                                   </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-700/50">
-                                    🍽️ Makan Disini
-                                  </span>
-                                )}
-                              </td>
-                              {/* Payment Method badge */}
-                              <td className="py-2.5 px-4 text-sm">
-                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${pmColors[item.paymentMethod] || 'bg-secondary text-foreground border-border'}`}>
-                                  {pmLabels[item.paymentMethod] || item.paymentMethod || '-'}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-4 text-sm text-right font-medium">{item.quantity}</td>
-                              <td className="py-2.5 px-4 text-sm text-right font-semibold text-success">
-                                {formatCurrency(item.total)}
-                              </td>
-                            </tr>
-                          ))}
-                        </React.Fragment>
-                      );
-                    })}
-                    {/* Grand Total row */}
-                    <tr className="bg-secondary/30 font-bold border-t-2 border-border">
-                      <td className="py-3 px-4 text-sm" colSpan={4}>Total {hasActiveFilter ? '(Terfilter)' : 'Keseluruhan'}</td>
-                      <td className="py-3 px-4 text-sm text-right">
-                        {filteredStats.reduce((acc, curr) => acc + curr.quantity, 0)}
-                      </td>
-                      <td className="py-3 px-4 text-sm text-right text-success">
-                        {formatCurrency(filteredStats.reduce((acc, curr) => acc + curr.total, 0))}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+                                </td>
+                                <td className="py-2.5 px-4 text-sm text-right font-medium">{item.quantity}</td>
+                                <td className="py-2.5 px-4 text-sm text-right font-semibold text-success">
+                                  {formatCurrency(item.total)}
+                                </td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                      {/* Grand Total row */}
+                      <tr className="bg-secondary/30 font-bold border-t-2 border-border">
+                        <td className="py-3 px-4 text-sm" colSpan={4}>Total {hasActiveFilter ? '(Terfilter)' : 'Keseluruhan'}</td>
+                        <td className="py-3 px-4 text-sm text-right">
+                          {filteredStats.reduce((acc, curr) => acc + curr.quantity, 0)}
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right text-success">
+                          {formatCurrency(filteredStats.reduce((acc, curr) => acc + curr.total, 0))}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           );

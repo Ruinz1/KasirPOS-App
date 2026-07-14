@@ -38,6 +38,8 @@ export default function MembersPage() {
   const [editForm, setEditForm] = useState<{ name: string; phone: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const [sendingWaId, setSendingWaId] = useState<number | null>(null);
+
   const [rfmType, setRfmType] = useState<RfmType>('spender');
   const [inactiveDays, setInactiveDays] = useState(60);
   const [rfmData, setRfmData] = useState<MemberRFM[]>([]);
@@ -119,6 +121,19 @@ export default function MembersPage() {
       setMembers(prev => prev.filter(m => m.id !== member.id));
     } catch {
       toast.error('Gagal menghapus member');
+    }
+  };
+
+  const handleSendPointsInfo = async (member: Member) => {
+    setSendingWaId(member.id);
+    try {
+      const res = await memberApi.sendPointsInfo(member.id);
+      toast.success(res.data.message);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(msg || 'Gagal mengirim WhatsApp');
+    } finally {
+      setSendingWaId(null);
     }
   };
 
@@ -245,6 +260,16 @@ export default function MembersPage() {
                         <p className="text-xs text-muted-foreground mt-1">{member.orders_count} transaksi</p>
                       )}
                     </div>
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="shrink-0 text-green-600 border-green-300 hover:bg-green-50"
+                      title="Kirim info poin & reward via WhatsApp"
+                      disabled={sendingWaId === member.id}
+                      onClick={e => { e.stopPropagation(); handleSendPointsInfo(member); }}
+                    >
+                      <MessageCircle className={`h-4 w-4 ${sendingWaId === member.id ? 'animate-pulse' : ''}`} />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -399,6 +424,16 @@ export default function MembersPage() {
                 <Input value={editForm.phone} onChange={e => setEditForm(p => p ? { ...p, phone: e.target.value } : p)} placeholder="Telepon" />
                 <Button size="sm" className="w-full" onClick={handleSaveEdit} disabled={saving}>
                   {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-2 text-green-600 border-green-300 hover:bg-green-50"
+                  onClick={() => handleSendPointsInfo(detailMember)}
+                  disabled={sendingWaId === detailMember.id}
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  {sendingWaId === detailMember.id ? 'Mengirim...' : 'Tes Kirim Info Poin via WA'}
                 </Button>
               </div>
 

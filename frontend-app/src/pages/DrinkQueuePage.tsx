@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import api from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth, HOLD_QUEUE_POSITIONS } from "@/hooks/useAuth";
-import { CheckCircle2, Undo2, Coffee, Pencil, RefreshCw, GlassWater, Clock } from "lucide-react";
+import { CheckCircle2, Undo2, Coffee, Pencil, RefreshCw, GlassWater, Clock, Maximize2, Minimize2, Timer } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
 import {
@@ -16,6 +16,7 @@ import {
     DialogTitle,
     DialogFooter,
 } from "@/components/ui/dialog";
+import { useOrderElapsed, formatElapsed, getElapsedColorClass, isUrgent, isWarning } from "@/hooks/useOrderElapsed";
 
 interface OrderItem {
     id: number;
@@ -93,6 +94,273 @@ const shouldHideOrder = (order: QueueOrder): boolean => {
     return foodCompleted;
 };
 
+// ─── Sub-komponen OrderCard ──────────────────────────────────────────────────
+interface DrinkOrderCardProps {
+    order: QueueOrder;
+    isFullscreen: boolean;
+    canHold: boolean;
+    editingNotes: number | null;
+    notesValue: string;
+    onDrinkStatusChange: (id: number, completed: boolean) => void;
+    onHoldClick: (order: QueueOrder) => void;
+    onResumeHold: (id: number) => void;
+    onEditNotes: (id: number, current: string) => void;
+    onSaveNotes: (id: number) => void;
+    onCancelNotes: () => void;
+    onNotesChange: (val: string) => void;
+    onEditOrder: (order: QueueOrder) => void;
+}
+
+const DrinkOrderCard = ({
+    order, isFullscreen, canHold,
+    editingNotes, notesValue,
+    onDrinkStatusChange, onHoldClick, onResumeHold,
+    onEditNotes, onSaveNotes, onCancelNotes, onNotesChange,
+    onEditOrder,
+}: DrinkOrderCardProps) => {
+    const elapsed = useOrderElapsed(order.created_at);
+    const displayItems = getDisplayItems(order);
+    const drinkItems = displayItems.filter(isDrinkItem);
+    if (drinkItems.length === 0) return null;
+
+    const isReactivated = isOrderReactivated(order);
+    const originalDrinkItems = getOriginalDrinkItems(order);
+    const hasNewAddons = !isReactivated && drinkItems.some(i => i.is_addon);
+    const drinkCompleted = order.drink_queue_status === "completed";
+    const isHold = order.drink_queue_status === "hold";
+    const urgent = !drinkCompleted && !isHold && isUrgent(elapsed);
+    const warning = !drinkCompleted && !isHold && isWarning(elapsed);
+
+    const formatTime = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+
+    // Border & background
+    let cardClass = "border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ";
+    if (drinkCompleted) cardClass += "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80";
+    else if (isHold) cardClass += "border-slate-400 bg-slate-50 dark:bg-slate-900/30 ring-2 ring-slate-400/40 shadow-md opacity-90";
+    else if (urgent) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-500/50 shadow-red-200 shadow-lg animate-pulse";
+    else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
+    else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md";
+    else if (warning) cardClass += "border-yellow-400 bg-yellow-50/50 dark:bg-yellow-950/10 shadow-md";
+    else cardClass += "border-blue-300 bg-white dark:bg-blue-950/10 shadow-sm";
+
+    let barColor = "h-1.5 w-full ";
+    if (drinkCompleted) barColor += "bg-green-500";
+    else if (isHold) barColor += "bg-slate-500";
+    else if (urgent) barColor += "bg-red-500";
+    else if (isReactivated) barColor += "bg-red-500";
+    else if (hasNewAddons) barColor += "bg-purple-500";
+    else if (warning) barColor += "bg-yellow-400";
+    else barColor += "bg-blue-400";
+
+    return (
+        <Card key={order.id} className={cardClass}>
+            <div className={barColor} />
+
+            <CardContent className={isFullscreen ? "p-3" : "p-4"}>
+                {/* RE-ORDER Banner */}
+                {isReactivated && !drinkCompleted && (
+                    <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs p-2 rounded-lg mb-3 font-bold border border-red-200 dark:border-red-800 flex items-center gap-2 animate-pulse">
+                        <span className="text-base">🔄</span>
+                        <div>RE-ORDER – TAMBAHAN BARU<div className="font-normal text-[10px] opacity-90">Pesanan sudah selesai, ada minuman tambahan</div></div>
+                    </div>
+                )}
+
+                {/* Normal Addon Banner */}
+                {hasNewAddons && !drinkCompleted && (
+                    <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded-lg mb-3 font-bold border border-purple-200 flex items-center gap-2 animate-pulse">
+                        <span className="text-base">🔔</span>
+                        <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru di pesanan ini</div></div>
+                    </div>
+                )}
+
+                {/* URGENT Banner */}
+                {urgent && !drinkCompleted && (
+                    <div className="bg-red-600 text-white text-xs p-2 rounded-lg mb-3 font-bold flex items-center gap-2">
+                        <Timer className="h-3.5 w-3.5 shrink-0" />
+                        <span>PESANAN TERLAMBAT! Segera selesaikan.</span>
+                    </div>
+                )}
+
+                {isHold && order.drink_hold_reason && (
+                    <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded-lg mb-3 font-medium border border-slate-300 dark:border-slate-600">
+                        <span className="font-bold">Alasan Hold:</span> {order.drink_hold_reason}
+                    </div>
+                )}
+
+                {/* Header */}
+                <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className={`${isFullscreen ? "text-6xl" : "text-5xl"} font-black leading-none ${drinkCompleted ? "text-green-500" : isHold ? "text-slate-600" : urgent ? "text-red-500" : isReactivated ? "text-red-500" : "text-blue-500"}`}>
+                                #{order.daily_number}
+                            </span>
+                            <div className="flex flex-col gap-1">
+                                <Badge
+                                    variant={order.order_type === "takeaway" ? "destructive" : "secondary"}
+                                    className="text-[10px] px-1.5 py-0.5 h-fit"
+                                >
+                                    {order.order_type === "takeaway" ? "🥡 Bungkus" : "🍽️ Makan Sini"}
+                                </Badge>
+                                {isReactivated && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-red-400 text-red-600 bg-red-50 animate-pulse">
+                                        🔄 RE-ORDER
+                                    </Badge>
+                                )}
+                                {hasNewAddons && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50">
+                                        + TAMBAHAN
+                                    </Badge>
+                                )}
+                            </div>
+                        </div>
+                        <p className={`font-bold truncate ${isFullscreen ? "text-base" : "text-sm"}`} title={order.customer_name || "Pelanggan"}>
+                            {order.customer_name || "Pelanggan"}
+                        </p>
+                        {order.table && (
+                            <Badge variant="outline" className="text-[10px] mt-1 border-primary text-primary bg-primary/10">
+                                🪑 Meja {order.table.table_number}
+                            </Badge>
+                        )}
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{formatTime(order.created_at)}</p>
+                    </div>
+
+                    {/* Timer */}
+                    {!drinkCompleted && (
+                        <div className={`flex flex-col items-center ml-2 shrink-0 px-2 py-1 rounded-xl border-2 ${
+                            urgent ? "border-red-500 bg-red-50 dark:bg-red-900/20" :
+                            warning ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20" :
+                            "border-blue-200 bg-blue-50/50 dark:bg-blue-900/10"
+                        }`}>
+                            <Timer className={`h-3 w-3 mb-0.5 ${urgent ? "text-red-500" : warning ? "text-yellow-500" : "text-blue-400"}`} />
+                            <span className={`text-sm leading-none tabular-nums ${getElapsedColorClass(elapsed)}`}>
+                                {formatElapsed(elapsed)}
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Drink Items Box */}
+                <div className={`rounded-xl border-2 overflow-hidden mb-3 ${
+                    drinkCompleted ? "border-green-400"
+                    : isHold ? "border-slate-400"
+                    : urgent ? "border-red-500"
+                    : isReactivated ? "border-red-400"
+                    : "border-blue-300"
+                }`}>
+                    <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${
+                        drinkCompleted ? "bg-green-500"
+                        : isHold ? "bg-slate-500"
+                        : urgent ? "bg-red-600"
+                        : isReactivated ? "bg-red-500"
+                        : "bg-blue-500"
+                    }`}>
+                        <Coffee className="h-3.5 w-3.5" />
+                        <span>{isReactivated ? "🔄 TAMBAHAN BARU" : "DAFTAR MINUMAN"}</span>
+                        {drinkCompleted && <span className="ml-auto bg-white/25 px-1.5 py-0.5 rounded text-[10px]">✓ Selesai</span>}
+                    </div>
+
+                    <div className={`px-3 py-2 space-y-1.5 overflow-y-auto bg-white/60 dark:bg-transparent ${isFullscreen ? "max-h-60" : "max-h-48"}`}>
+                        {/* Jika re-activated: item original greyed-out */}
+                        {isReactivated && originalDrinkItems.length > 0 && (
+                            <div className="mb-2 pb-2 border-b border-dashed border-gray-300">
+                                <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pesanan Sebelumnya (sudah selesai):</p>
+                                {originalDrinkItems.map(item => (
+                                    <div key={item.id} className="text-xs leading-relaxed opacity-40 line-through">
+                                        <div className="flex items-baseline gap-1">
+                                            <span className="font-black text-gray-500 text-sm">{item.quantity}×</span>
+                                            <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {isReactivated && (
+                            <p className="text-[9px] text-red-600 uppercase font-bold tracking-wider mb-1">↓ Buat Sekarang:</p>
+                        )}
+                        {drinkItems.map(item => (
+                            <div key={item.id} className={`text-xs leading-relaxed ${
+                                isReactivated
+                                    ? "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-2 py-1.5"
+                                    : item.is_addon
+                                        ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 rounded-lg px-2 py-1"
+                                        : ""
+                            }`}>
+                                <div className="flex items-baseline gap-1">
+                                    <span className={`font-black text-sm ${isReactivated ? "text-red-600" : "text-blue-600"}`}>{item.quantity}×</span>
+                                    <span className={`font-medium truncate ${isFullscreen ? "text-sm" : ""}`}>{item.menu_item?.name || "Item Dihapus"}</span>
+                                    {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
+                                    {!isReactivated && item.is_addon && (
+                                        <span className="text-purple-600 text-[10px] font-bold ml-1">● BARU</span>
+                                    )}
+                                </div>
+                                {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {item.note}</p>}
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Action Button */}
+                    <div className="flex flex-col gap-1 p-2 bg-white/40 dark:bg-transparent border-t border-blue-100 dark:border-blue-900/30">
+                        {drinkCompleted ? (
+                            <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => onDrinkStatusChange(order.id, false)}>
+                                <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
+                            </Button>
+                        ) : (
+                            <div className="flex gap-1 w-full">
+                                <Button
+                                    size="sm"
+                                    className={`flex-1 h-8 text-xs text-white shadow-sm ${urgent ? "bg-red-600 hover:bg-red-700" : isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}
+                                    onClick={() => onDrinkStatusChange(order.id, true)}
+                                >
+                                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
+                                </Button>
+                                {canHold && (isHold ? (
+                                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 shadow-sm" onClick={() => onResumeHold(order.id)} title="Lanjutkan Pesanan">
+                                        <RefreshCw className="h-4 w-4" />
+                                    </Button>
+                                ) : (
+                                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600 shadow-sm" onClick={() => onHoldClick(order)} title="Tahan Pesanan">
+                                        <Clock className="h-4 w-4" />
+                                    </Button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Notes */}
+                {!isFullscreen && (
+                    <div className="border-t pt-2">
+                        <p className="text-[11px] font-semibold text-muted-foreground mb-1">📝 Catatan</p>
+                        {editingNotes === order.id ? (
+                            <div className="space-y-1.5">
+                                <Textarea value={notesValue} onChange={e => onNotesChange(e.target.value)} placeholder="Catatan..." rows={2} className="text-xs" />
+                                <div className="flex gap-1">
+                                    <Button size="sm" onClick={() => onSaveNotes(order.id)} className="text-xs h-7 flex-1">Simpan</Button>
+                                    <Button size="sm" variant="outline" onClick={onCancelNotes} className="text-xs h-7 flex-1">Batal</Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="p-2 bg-muted/40 rounded-lg cursor-pointer hover:bg-muted text-xs min-h-[2.5rem] max-h-16 overflow-y-auto" onClick={() => onEditNotes(order.id, order.notes || "")}>
+                                {order.notes ? <span>{order.notes}</span> : <span className="text-muted-foreground italic">Klik untuk tambah catatan...</span>}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Footer */}
+                <div className="mt-2 pt-2 border-t flex items-center justify-between">
+                    <p className="text-[11px] text-muted-foreground truncate">Kasir: {order.user.name}</p>
+                    <Button size="sm" variant="ghost" className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-primary" onClick={e => { e.stopPropagation(); onEditOrder(order); }}>
+                        <Pencil className="h-3 w-3" /> Edit
+                    </Button>
+                </div>
+            </CardContent>
+        </Card>
+    );
+};
+
+// ─── Halaman Utama ───────────────────────────────────────────────────────────
 const DrinkQueuePage = () => {
     const [orders, setOrders] = useState<QueueOrder[]>([]);
     const [loading, setLoading] = useState(true);
@@ -104,12 +372,31 @@ const DrinkQueuePage = () => {
     const [showEditDialog, setShowEditDialog] = useState(false);
     const [holdDialogOrder, setHoldDialogOrder] = useState<QueueOrder | null>(null);
     const [holdReason, setHoldReason] = useState("");
+    const [isFullscreen, setIsFullscreen] = useState(false);
     const { toast } = useToast();
     const { canEdit, hasAnyPosition } = useAuth();
-    // Hold/lanjutkan pesanan: admin & owner, atau jabatan dapur/manajemen (mis. Kitchen Assistant)
     const canHold = canEdit() || hasAnyPosition(HOLD_QUEUE_POSITIONS);
     const prevOrdersRef = useRef<QueueOrder[]>([]);
+    const containerRef = useRef<HTMLDivElement>(null);
 
+    // ── Fullscreen ──────────────────────────────────────────────────────────
+    const toggleFullscreen = useCallback(() => {
+        if (!document.fullscreenElement) {
+            containerRef.current?.requestFullscreen().catch(() => {});
+            setIsFullscreen(true);
+        } else {
+            document.exitFullscreen().catch(() => {});
+            setIsFullscreen(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+        document.addEventListener("fullscreenchange", onFsChange);
+        return () => document.removeEventListener("fullscreenchange", onFsChange);
+    }, []);
+
+    // ── Audio ───────────────────────────────────────────────────────────────
     const playNotificationSound = () => {
         try {
             const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
@@ -141,6 +428,7 @@ const DrinkQueuePage = () => {
         }
     };
 
+    // ── Data Fetching ───────────────────────────────────────────────────────
     const fetchQueue = async () => {
         try {
             const res = await api.get("/queue");
@@ -166,7 +454,6 @@ const DrinkQueuePage = () => {
                     return (p[a.queue_status] ?? 1) - (p[b.queue_status] ?? 1) || a.id - b.id;
                 });
                 setOrders(drinkOrders);
-                // Menunggu = drink masih pending (belum dicentang selesai)
                 setPendingCount(drinkOrders.filter(o => o.drink_queue_status !== "completed").length);
                 prevOrdersRef.current = data;
             }
@@ -193,6 +480,7 @@ const DrinkQueuePage = () => {
         return () => clearInterval(interval);
     }, []);
 
+    // ── Actions ─────────────────────────────────────────────────────────────
     const handleDrinkStatusChange = async (orderId: number, completed: boolean) => {
         try {
             const res = await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: completed ? "completed" : "pending" });
@@ -232,6 +520,11 @@ const DrinkQueuePage = () => {
         }
     };
 
+    const handleResumeHold = async (orderId: number) => {
+        await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: "pending" });
+        fetchQueue();
+    };
+
     const handleNotesUpdate = async (orderId: number) => {
         try {
             await api.put(`/queue/${orderId}/notes`, { notes: notesValue });
@@ -243,8 +536,7 @@ const DrinkQueuePage = () => {
         }
     };
 
-    const formatTime = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-
+    // ── Render ──────────────────────────────────────────────────────────────
     if (loading) {
         return (
             <MainLayout>
@@ -258,318 +550,137 @@ const DrinkQueuePage = () => {
         );
     }
 
-    return (
-        <MainLayout>
-            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-cyan-50 to-sky-50 dark:from-blue-950/20 dark:via-cyan-950/10 dark:to-background">
-                {/* Header */}
-                <div className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-5 shadow-lg">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <div className="bg-white/20 p-3 rounded-2xl">
-                                <GlassWater className="h-8 w-8" />
-                            </div>
-                            <div>
-                                <h1 className="text-2xl font-bold tracking-wide">Antrian Minuman</h1>
+    const pageContent = (
+        <div
+            ref={containerRef}
+            className={`min-h-screen bg-gradient-to-br from-blue-50 via-cyan-50 to-sky-50 dark:from-blue-950/20 dark:via-cyan-950/10 dark:to-background ${isFullscreen ? "overflow-y-auto" : ""}`}
+        >
+            {/* Header */}
+            <div className={`bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg ${isFullscreen ? "px-4 py-3 sticky top-0 z-10" : "px-6 py-5"}`}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white/20 p-2.5 rounded-2xl">
+                            <GlassWater className={isFullscreen ? "h-7 w-7" : "h-8 w-8"} />
+                        </div>
+                        <div>
+                            <h1 className={`font-bold tracking-wide ${isFullscreen ? "text-xl" : "text-2xl"}`}>Antrian Minuman</h1>
+                            {!isFullscreen && (
                                 <p className="text-blue-100 text-sm mt-0.5">
                                     {new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" })}
                                 </p>
-                            </div>
-                            <Badge className="bg-white/25 text-white border-white/30 animate-pulse ml-2">
-                                ● LIVE
-                            </Badge>
+                            )}
                         </div>
-                        <div className="flex items-center gap-3">
-                            <div className="hidden sm:flex items-center gap-4 bg-white/15 rounded-2xl px-5 py-3">
-                                <div className="text-center">
-                                    <div className="text-2xl font-bold">{completedToday}</div>
-                                    <div className="text-[11px] text-blue-100">Selesai Hari Ini</div>
-                                </div>
-                                <div className="w-px h-10 bg-white/30" />
-                                <div className="text-center">
-                                    <div className="text-2xl font-bold">{pendingCount}</div>
-                                    <div className="text-[11px] text-blue-100">Menunggu</div>
-                                </div>
-                                <div className="w-px h-10 bg-white/30" />
-                                <div className="text-center">
-                                    <div className="text-2xl font-bold">{orders.length}</div>
-                                    <div className="text-[11px] text-blue-100">Dalam Antrian</div>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => { playNotificationSound(); setTimeout(() => speakNewOrder(), 800); }}
-                                className="text-xs text-white/70 underline hover:text-white"
-                            >Tes Suara</button>
-                            <Button onClick={() => { fetchQueue(); fetchStatistics(); }} variant="outline" size="sm" className="bg-white/20 border-white/30 text-white hover:bg-white/30">
-                                <RefreshCw className="h-4 w-4 mr-1" /> Refresh
-                            </Button>
-                        </div>
+                        <Badge className="bg-white/25 text-white border-white/30 animate-pulse ml-1">
+                            ● LIVE
+                        </Badge>
                     </div>
-                </div>
 
-                {/* Content */}
-                <div className="p-6">
-                    {orders.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-24 text-center">
-                            <div className="bg-blue-100 dark:bg-blue-950/30 rounded-full p-6 mb-4">
-                                <Coffee className="h-14 w-14 text-blue-400" />
+                    <div className="flex items-center gap-2">
+                        {/* Stats */}
+                        <div className="hidden sm:flex items-center gap-4 bg-white/15 rounded-2xl px-4 py-2.5">
+                            <div className="text-center">
+                                <div className={`font-bold ${isFullscreen ? "text-xl" : "text-2xl"}`}>{completedToday}</div>
+                                <div className="text-[11px] text-blue-100">Selesai</div>
                             </div>
-                            <h2 className="text-xl font-semibold text-muted-foreground mb-1">Tidak ada antrian minuman</h2>
-                            <p className="text-sm text-muted-foreground">Pesanan minuman akan muncul di sini secara otomatis</p>
+                            <div className="w-px h-8 bg-white/30" />
+                            <div className="text-center">
+                                <div className={`font-bold ${isFullscreen ? "text-xl" : "text-2xl"}`}>{pendingCount}</div>
+                                <div className="text-[11px] text-blue-100">Menunggu</div>
+                            </div>
+                            <div className="w-px h-8 bg-white/30" />
+                            <div className="text-center">
+                                <div className={`font-bold ${isFullscreen ? "text-xl" : "text-2xl"}`}>{orders.length}</div>
+                                <div className="text-[11px] text-blue-100">Antrian</div>
+                            </div>
                         </div>
-                    ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                            {orders.map(order => {
-                                const displayItems = getDisplayItems(order);
-                                const drinkItems = displayItems.filter(isDrinkItem);
-                                if (drinkItems.length === 0) return null;
 
-                                const isReactivated = isOrderReactivated(order);
-                                const originalDrinkItems = getOriginalDrinkItems(order);
-                                const hasNewAddons = !isReactivated && drinkItems.some(i => i.is_addon);
-                                const drinkCompleted = order.drink_queue_status === "completed";
+                        <button
+                            onClick={() => { playNotificationSound(); setTimeout(() => speakNewOrder(), 800); }}
+                            className="text-xs text-white/70 underline hover:text-white hidden sm:block"
+                        >Tes Suara</button>
 
-                                const isHold = order.drink_queue_status === "hold";
+                        <Button onClick={() => { fetchQueue(); fetchStatistics(); }} variant="outline" size="sm" className="bg-white/20 border-white/30 text-white hover:bg-white/30">
+                            <RefreshCw className="h-4 w-4" />
+                            {!isFullscreen && <span className="ml-1">Refresh</span>}
+                        </Button>
 
-                                let cardClass = "border-2 transition-all duration-200 hover:shadow-xl overflow-hidden ";
-                                if (drinkCompleted) cardClass += "border-green-400 bg-green-50/80 dark:bg-green-950/20 opacity-80";
-                                else if (isHold) cardClass += "border-slate-400 bg-slate-50 dark:bg-slate-900/30 ring-2 ring-slate-400/40 shadow-md opacity-90";
-                                else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
-                                else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md";
-                                else cardClass += "border-blue-300 bg-white dark:bg-blue-950/10 shadow-sm";
-
-                                let barColor = "h-1.5 w-full ";
-                                if (drinkCompleted) barColor += "bg-green-500";
-                                else if (isHold) barColor += "bg-slate-500";
-                                else if (isReactivated) barColor += "bg-red-500";
-                                else if (hasNewAddons) barColor += "bg-purple-500";
-                                else barColor += "bg-blue-400";
-
-                                return (
-                                    <Card key={order.id} className={cardClass}>
-                                        <div className={barColor} />
-
-                                        <CardContent className="p-4">
-                                            {/* RE-ORDER Banner */}
-                                            {isReactivated && !drinkCompleted && (
-                                                <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs p-2 rounded-lg mb-3 font-bold border border-red-200 dark:border-red-800 flex items-center gap-2 animate-pulse">
-                                                    <span className="text-base">🔄</span>
-                                                    <div>RE-ORDER – TAMBAHAN BARU<div className="font-normal text-[10px] opacity-90">Pesanan sudah selesai, ada minuman tambahan</div></div>
-                                                </div>
-                                            )}
-
-                                            {/* Normal Addon Banner */}
-                                            {hasNewAddons && !drinkCompleted && (
-                                                <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded-lg mb-3 font-bold border border-purple-200 flex items-center gap-2 animate-pulse">
-                                                    <span className="text-base">🔔</span>
-                                                    <div>TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru di pesanan ini</div></div>
-                                                </div>
-                                            )}
-
-                                            {isHold && order.drink_hold_reason && (
-                                                <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded-lg mb-3 font-medium border border-slate-300 dark:border-slate-600">
-                                                    <span className="font-bold">Alasan Hold:</span> {order.drink_hold_reason}
-                                                </div>
-                                            )}
-
-                                            {/* Header */}
-                                            <div className="flex items-start justify-between mb-3">
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className={`text-5xl font-black leading-none ${drinkCompleted ? "text-green-500" : isHold ? "text-slate-600" : isReactivated ? "text-red-500" : "text-blue-500"}`}>
-                                                            #{order.daily_number}
-                                                        </span>
-                                                        <div className="flex flex-col gap-1">
-                                                            <Badge
-                                                                variant={order.order_type === "takeaway" ? "destructive" : "secondary"}
-                                                                className="text-[10px] px-1.5 py-0.5 h-fit"
-                                                            >
-                                                                {order.order_type === "takeaway" ? "🥡 Bungkus" : "🍽️ Makan Sini"}
-                                                            </Badge>
-                                                            {isReactivated && (
-                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-red-400 text-red-600 bg-red-50 animate-pulse">
-                                                                    🔄 RE-ORDER
-                                                                </Badge>
-                                                            )}
-                                                            {hasNewAddons && (
-                                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50">
-                                                                    + TAMBAHAN
-                                                                </Badge>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    <p className="font-bold text-sm truncate" title={order.customer_name || "Pelanggan"}>
-                                                        {order.customer_name || "Pelanggan"}
-                                                    </p>
-                                                    {order.table && (
-                                                        <Badge variant="outline" className="text-[10px] mt-1 border-primary text-primary bg-primary/10">
-                                                            🪑 Meja {order.table.table_number}
-                                                        </Badge>
-                                                    )}
-                                                    <p className="text-[11px] text-muted-foreground mt-0.5">{formatTime(order.created_at)}</p>
-                                                </div>
-                                            </div>
-
-                                            {/* Drink Items Box */}
-                                            <div className={`rounded-xl border-2 overflow-hidden mb-3 ${
-                                                drinkCompleted ? "border-green-400"
-                                                : isHold ? "border-slate-400"
-                                                : isReactivated ? "border-red-400"
-                                                : "border-blue-300"
-                                            }`}>
-                                                <div className={`flex items-center gap-2 px-3 py-2 text-white text-xs font-bold ${
-                                                    drinkCompleted ? "bg-green-500"
-                                                    : isHold ? "bg-slate-500"
-                                                    : isReactivated ? "bg-red-500"
-                                                    : "bg-blue-500"
-                                                }`}>
-                                                    <Coffee className="h-3.5 w-3.5" />
-                                                    <span>{isReactivated ? "🔄 TAMBAHAN BARU" : "DAFTAR MINUMAN"}</span>
-                                                    {drinkCompleted && <span className="ml-auto bg-white/25 px-1.5 py-0.5 rounded text-[10px]">✓ Selesai</span>}
-                                                </div>
-                                                <div className="px-3 py-2 space-y-1.5 max-h-48 overflow-y-auto bg-white/60 dark:bg-transparent">
-                                                    {/* Jika re-activated: item original greyed-out */}
-                                                    {isReactivated && originalDrinkItems.length > 0 && (
-                                                        <div className="mb-2 pb-2 border-b border-dashed border-gray-300">
-                                                            <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pesanan Sebelumnya (sudah selesai):</p>
-                                                            {originalDrinkItems.map(item => (
-                                                                <div key={item.id} className="text-xs leading-relaxed opacity-40 line-through">
-                                                                    <div className="flex items-baseline gap-1">
-                                                                        <span className="font-black text-gray-500 text-sm">{item.quantity}×</span>
-                                                                        <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                    {isReactivated && (
-                                                        <p className="text-[9px] text-red-600 uppercase font-bold tracking-wider mb-1">↓ Buat Sekarang:</p>
-                                                    )}
-                                                    {drinkItems.map(item => (
-                                                        <div key={item.id} className={`text-xs leading-relaxed ${
-                                                            isReactivated
-                                                                ? "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-2 py-1.5"
-                                                                : item.is_addon
-                                                                    ? "bg-purple-50 dark:bg-purple-900/30 border border-purple-200 rounded-lg px-2 py-1"
-                                                                    : ""
-                                                        }`}>
-                                                            <div className="flex items-baseline gap-1">
-                                                                <span className={`font-black text-sm ${
-                                                                    isReactivated ? "text-red-600" : "text-blue-600"
-                                                                }`}>{item.quantity}×</span>
-                                                                <span className="font-medium truncate">{item.menu_item?.name || "Item Dihapus"}</span>
-                                                                {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
-                                                                {!isReactivated && item.is_addon && (
-                                                                    <span className="text-purple-600 text-[10px] font-bold ml-1">● BARU</span>
-                                                                )}
-                                                            </div>
-                                                            {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {item.note}</p>}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                {/* Action Button */}
-                                                <div className="flex flex-col gap-1 p-2 bg-white/40 dark:bg-transparent border-t border-blue-100 dark:border-blue-900/30">
-                                                    {drinkCompleted ? (
-                                                        <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => handleDrinkStatusChange(order.id, false)}>
-                                                            <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
-                                                        </Button>
-                                                    ) : (
-                                                        <div className="flex gap-1 w-full">
-                                                            <Button size="sm" className={`flex-1 h-8 text-xs text-white shadow-sm ${isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`} onClick={() => handleDrinkStatusChange(order.id, true)}>
-                                                                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
-                                                            </Button>
-                                                            {canHold && (isHold ? (
-                                                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 shadow-sm" onClick={async () => {
-                                                                    await api.put(`/queue/${order.id}/drink-status`, { drink_queue_status: "pending" });
-                                                                    fetchQueue();
-                                                                }} title="Lanjutkan Pesanan">
-                                                                    <RefreshCw className="h-4 w-4" />
-                                                                </Button>
-                                                            ) : (
-                                                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600 shadow-sm" onClick={() => {
-                                                                    setHoldDialogOrder(order);
-                                                                    setHoldReason("");
-                                                                }} title="Tahan Pesanan">
-                                                                    <Clock className="h-4 w-4" />
-                                                                </Button>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Notes */}
-                                            <div className="border-t pt-2">
-                                                <p className="text-[11px] font-semibold text-muted-foreground mb-1">📝 Catatan</p>
-                                                {editingNotes === order.id ? (
-                                                    <div className="space-y-1.5">
-                                                        <Textarea value={notesValue} onChange={e => setNotesValue(e.target.value)} placeholder="Catatan..." rows={2} className="text-xs" />
-                                                        <div className="flex gap-1">
-                                                            <Button size="sm" onClick={() => handleNotesUpdate(order.id)} className="text-xs h-7 flex-1">Simpan</Button>
-                                                            <Button size="sm" variant="outline" onClick={() => { setEditingNotes(null); setNotesValue(""); }} className="text-xs h-7 flex-1">Batal</Button>
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <div className="p-2 bg-muted/40 rounded-lg cursor-pointer hover:bg-muted text-xs min-h-[2.5rem] max-h-16 overflow-y-auto" onClick={() => { setEditingNotes(order.id); setNotesValue(order.notes || ""); }}>
-                                                        {order.notes ? <span>{order.notes}</span> : <span className="text-muted-foreground italic">Klik untuk tambah catatan...</span>}
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            {/* Footer */}
-                                            <div className="mt-2 pt-2 border-t flex items-center justify-between">
-                                                <p className="text-[11px] text-muted-foreground truncate">Kasir: {order.user.name}</p>
-                                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-primary" onClick={e => { e.stopPropagation(); setEditingOrder(order); setShowEditDialog(true); }}>
-                                                    <Pencil className="h-3 w-3" /> Edit
-                                                </Button>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                );
-                            })}
-                        </div>
-                    )}
+                        {/* Fullscreen Toggle */}
+                        <Button onClick={toggleFullscreen} variant="outline" size="sm" className="bg-white/20 border-white/30 text-white hover:bg-white/30" title={isFullscreen ? "Keluar Fullscreen" : "Mode Fullscreen"}>
+                            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                        </Button>
+                    </div>
                 </div>
             </div>
 
+            {/* Content */}
+            <div className={isFullscreen ? "p-3" : "p-6"}>
+                {orders.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-24 text-center">
+                        <div className="bg-blue-100 dark:bg-blue-950/30 rounded-full p-6 mb-4">
+                            <Coffee className="h-14 w-14 text-blue-400" />
+                        </div>
+                        <h2 className="text-xl font-semibold text-muted-foreground mb-1">Tidak ada antrian minuman</h2>
+                        <p className="text-sm text-muted-foreground">Pesanan minuman akan muncul di sini secara otomatis</p>
+                    </div>
+                ) : (
+                    <div className={`grid gap-3 ${isFullscreen
+                        ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
+                        : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+                    }`}>
+                        {orders.map(order => (
+                            <DrinkOrderCard
+                                key={order.id}
+                                order={order}
+                                isFullscreen={isFullscreen}
+                                canHold={canHold}
+                                editingNotes={editingNotes}
+                                notesValue={notesValue}
+                                onDrinkStatusChange={handleDrinkStatusChange}
+                                onHoldClick={(o) => { setHoldDialogOrder(o); setHoldReason(""); }}
+                                onResumeHold={handleResumeHold}
+                                onEditNotes={(id, val) => { setEditingNotes(id); setNotesValue(val); }}
+                                onSaveNotes={handleNotesUpdate}
+                                onCancelNotes={() => { setEditingNotes(null); setNotesValue(""); }}
+                                onNotesChange={setNotesValue}
+                                onEditOrder={(o) => { setEditingOrder(o); setShowEditDialog(true); }}
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
+    const dialogs = (
+        <>
             <EditQueueOrderDialog
                 open={showEditDialog}
                 onOpenChange={open => { setShowEditDialog(open); if (!open) setEditingOrder(null); }}
                 order={editingOrder}
                 onSuccess={() => { prevOrdersRef.current = []; fetchQueue(); fetchStatistics(); }}
             />
-
             <Dialog open={!!holdDialogOrder} onOpenChange={(open) => !open && setHoldDialogOrder(null)}>
                 <DialogContent className="sm:max-w-[400px]">
                     <DialogHeader>
                         <DialogTitle>Tahan Pesanan #{holdDialogOrder?.daily_number}</DialogTitle>
                     </DialogHeader>
                     <div className="py-4">
-                        <label className="text-sm font-medium mb-2 block">
-                            Alasan Pesanan Ditahan:
-                        </label>
-                        <Textarea
-                            value={holdReason}
-                            onChange={(e) => setHoldReason(e.target.value)}
-                            placeholder="Contoh: Menunggu es batu, pelanggan belum bayar..."
-                            className="min-h-[100px]"
-                        />
+                        <label className="text-sm font-medium mb-2 block">Alasan Pesanan Ditahan:</label>
+                        <Textarea value={holdReason} onChange={(e) => setHoldReason(e.target.value)} placeholder="Contoh: Menunggu es batu, pelanggan belum bayar..." className="min-h-[100px]" />
                     </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setHoldDialogOrder(null)}>
-                            Batal
-                        </Button>
-                        <Button
-                            className="bg-slate-500 hover:bg-slate-600 text-white"
-                            onClick={handleHoldOrder}
-                            disabled={!holdReason.trim()}
-                        >
-                            Tahan Pesanan
-                        </Button>
+                        <Button variant="outline" onClick={() => setHoldDialogOrder(null)}>Batal</Button>
+                        <Button className="bg-slate-500 hover:bg-slate-600 text-white" onClick={handleHoldOrder} disabled={!holdReason.trim()}>Tahan Pesanan</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </MainLayout>
+        </>
+    );
+
+    return isFullscreen ? (
+        <>{pageContent}{dialogs}</>
+    ) : (
+        <MainLayout>{pageContent}{dialogs}</MainLayout>
     );
 };
 

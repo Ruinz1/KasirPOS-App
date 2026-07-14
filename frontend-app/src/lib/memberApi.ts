@@ -25,6 +25,9 @@ export const memberApi = {
 
   transactions: (id: number, page = 1) =>
     api.get<{ data: PointTransaction[] }>(`/members/${id}/transactions`, { params: { page } }),
+
+  sendPointsInfo: (id: number) =>
+    api.post<{ message: string; method?: 'template' | 'text' }>(`/members/${id}/send-points-info`),
 };
 
 export const rewardApi = {
