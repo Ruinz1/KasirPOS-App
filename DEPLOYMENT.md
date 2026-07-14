@@ -37,6 +37,51 @@ php artisan jwt:secret
 php artisan migrate --force
 ```
 
+### 1a. Integrasi WhatsApp (Meta Cloud API) - `backend-App/.env`
+
+Fitur notifikasi WA (member baru, info poin setelah bayar, tombol tes di halaman Member) memakai **Meta WhatsApp Cloud API** langsung. Tambahkan 4 baris ini ke `backend-App/.env` di VPS:
+
+```env
+WHATSAPP_PROVIDER=meta
+WHATSAPP_META_ACCESS_TOKEN=EAAxxxx...           # token system user (lihat cara ambil di bawah)
+WHATSAPP_META_PHONE_NUMBER_ID=1164406100097805  # ID nomor telepon di WhatsApp Manager
+WHATSAPP_META_WABA_ID=1011403468253430          # ID akun WhatsApp Business (WABA)
+```
+
+**Dari mana nilai-nilai ini didapat:**
+
+| Variabel | Sumber |
+|---|---|
+| `WHATSAPP_META_ACCESS_TOKEN` | [business.facebook.com/settings](https://business.facebook.com/settings) → **Pengguna sistem** → pilih system user → **Buat token** → pilih aplikasi (KedaiPos) → masa berlaku **Tidak pernah kedaluwarsa** → centang izin `whatsapp_business_messaging` + `whatsapp_business_management` |
+| `WHATSAPP_META_PHONE_NUMBER_ID` | WhatsApp Manager → **Nomor telepon** → klik nomornya → "ID nomor telepon" |
+| `WHATSAPP_META_WABA_ID` | WhatsApp Manager → lihat parameter `asset_id` di URL, atau Pengaturan Bisnis → **Akun WhatsApp** → kolom ID |
+| `WHATSAPP_PROVIDER` | `meta` (langsung ke Graph API). Isi `gateway` hanya jika kembali pakai chat.api.co.id |
+
+Setelah mengubah `.env`, selalu jalankan:
+```bash
+php artisan config:clear
+```
+
+**Verifikasi koneksi & status template:**
+```bash
+php artisan whatsapp:test --status 0
+```
+Perintah ini menampilkan nomor yang terhubung beserta daftar template dan statusnya. Template harus berstatus `APPROVED` agar pesan bisa dikirim tanpa syarat. Template yang dipakai aplikasi: `member_baru` (member baru), `poin_transaksi` (poin setelah bayar), `info_poin` (tombol tes di halaman Member).
+
+**Tes kirim manual:**
+```bash
+# Kirim template (parameter bernama pakai format kunci=nilai)
+php artisan whatsapp:test 08xxxxxxxxxx member_baru customer_name=Budi bakso_bento_malang="Nama Toko"
+
+# Kirim teks bebas (hanya berhasil jika nomor tujuan chat duluan ke nomor bisnis <24 jam)
+php artisan whatsapp:test 08xxxxxxxxxx --text="Tes koneksi"
+```
+
+**Catatan penting:**
+* Token dengan masa berlaku 60 hari akan mati diam-diam — selalu buat token **Tidak pernah kedaluwarsa**. Cek masa berlaku token di [developers.facebook.com/tools/debug/accesstoken](https://developers.facebook.com/tools/debug/accesstoken).
+* Jika pengiriman gagal, detail error dari Meta tercatat di `storage/logs/laravel.log`.
+* Template, nomor, dan WABA tersimpan di akun Meta (bukan di server), jadi nilai env-nya **sama persis** antara lokal dan VPS.
+
 ### 2. Frontend (React / Vite) - `frontend-app/.env.production`
 Variabel env di frontend (Vite) akan ditanam langsung (hardcoded) ke dalam kode JS saat proses build.
 ```bash
