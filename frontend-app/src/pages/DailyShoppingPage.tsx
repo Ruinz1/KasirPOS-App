@@ -19,6 +19,7 @@ import { compressImageToWebp, storageUrl } from '@/lib/utils';
 
 const MySwal = withReactContent(Swal);
 import { MainLayout } from "@/components/layout/MainLayout";
+import { StatCardsSkeleton, TableSkeleton } from "@/components/skeletons";
 import {
     ShoppingCart,
     TrendingUp,
@@ -584,11 +585,9 @@ const DailyShoppingPage = () => {
     if (loading) {
         return (
             <MainLayout>
-                <div className="flex items-center justify-center h-screen">
-                    <div className="text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                        <p className="mt-4 text-muted-foreground">Memuat data...</p>
-                    </div>
+                <div className="p-4 md:p-8 space-y-6">
+                    <StatCardsSkeleton count={4} />
+                    <TableSkeleton rows={8} cols={5} />
                 </div>
             </MainLayout>
         );

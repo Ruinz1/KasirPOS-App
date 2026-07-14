@@ -19,6 +19,7 @@ use App\Http\Controllers\LeaveController;
 use App\Http\Controllers\CashierShiftController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\PointRewardController;
+use App\Http\Controllers\Api\AuditLogController;
 
 // Public routes
 Route::post('/login', [AuthController::class, 'login']);
@@ -136,6 +137,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/point-rewards', [PointRewardController::class, 'store']);
     Route::put('/point-rewards/{pointReward}', [PointRewardController::class, 'update']);
     Route::delete('/point-rewards/{pointReward}', [PointRewardController::class, 'destroy']);
+
+    // Audit Log routes (admin & owner — dicek di controller)
+    Route::get('/audit-logs', [AuditLogController::class, 'index']);
+    Route::get('/audit-logs/actions', [AuditLogController::class, 'actions']);
 
     // Capital routes
     Route::get('/capital', [CapitalController::class, 'index']);

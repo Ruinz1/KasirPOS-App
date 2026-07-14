@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CashierShift;
 use App\Models\Order;
 use App\Models\DailyShopping;
+use App\Services\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -115,6 +116,17 @@ class CashierShiftController extends Controller
             'status' => 'open',
         ]);
 
+        AuditLogger::log(
+            $request,
+            'shift.buka',
+            "Buka shift kasir dengan modal awal Rp " . number_format((float) $shift->opening_cash, 0, ',', '.'),
+            'CashierShift',
+            $shift->id,
+            null,
+            ['opening_cash' => $shift->opening_cash],
+            $storeId,
+        );
+
         return response()->json([
             'message' => 'Shift berhasil dibuka',
             'shift' => $shift->load('user'),
@@ -197,6 +209,27 @@ class CashierShiftController extends Controller
             ]);
 
             DB::commit();
+
+            $selisihLabel = $discrepancy == 0
+                ? 'sesuai'
+                : ($discrepancy > 0 ? 'lebih Rp ' : 'kurang Rp ') . number_format(abs($discrepancy), 0, ',', '.');
+
+            AuditLogger::log(
+                $request,
+                'shift.tutup',
+                "Tutup shift kasir. Kas akhir Rp " . number_format((float) $closingCash, 0, ',', '.')
+                    . ", ekspektasi Rp " . number_format((float) $expectedCash, 0, ',', '.')
+                    . " (selisih: {$selisihLabel})",
+                'CashierShift',
+                $shift->id,
+                null,
+                [
+                    'closing_cash' => $closingCash,
+                    'expected_cash' => $expectedCash,
+                    'discrepancy' => $discrepancy,
+                ],
+                $shift->store_id,
+            );
 
             return response()->json([
                 'message' => 'Shift berhasil ditutup',

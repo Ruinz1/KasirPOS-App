@@ -30,6 +30,7 @@ import {
   Clock,
   Star,
   Gift,
+  ScrollText,
   Menu as MenuIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -59,6 +60,7 @@ const allMenuItems = [
   { icon: Building2, label: 'Manajemen Toko', path: '/stores-management', permission: 'manage_stores_system' },
   { icon: DollarSign, label: 'Modal', path: '/capital', permission: 'manage_capital' },
   { icon: Store, label: 'Toko', path: '/store', permission: 'owner_access' },
+  { icon: ScrollText, label: 'Audit Log', path: '/audit-logs', permission: 'audit_log_special' },
   { icon: Shield, label: 'Role & Izin', path: '/roles', permission: 'manage_roles_fallback' },
 ];
 
@@ -90,6 +92,8 @@ function useVisibleMenuItems() {
     if (item.path === '/stores-management') return user.role === 'admin';
     // Special handling for Store Profile (Owner only)
     if (item.path === '/store') return user.role === 'owner';
+    // Audit Log visible to admin & owner only
+    if (item.path === '/audit-logs') return user.role === 'admin' || user.role === 'owner';
     // Special handling for Leaves (All users)
     if (item.path === '/leaves') return true;
     // Member & Reward Poin visible to admin, owner, and karyawan with manage_orders

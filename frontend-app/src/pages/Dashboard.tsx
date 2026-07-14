@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { formatCurrency, formatNumber } from '@/utils/calculations';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import { StatCardsSkeleton } from '@/components/skeletons';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   TrendingUp,
   DollarSign,
@@ -137,68 +140,59 @@ const HeatmapCell = ({
   );
 };
 
+interface DashboardData {
+  stats: DashboardStats;
+  recentOrders: RecentOrder[];
+  salesData: SalesChartData[];
+  popularMenuData: PopularMenuData[];
+  lowStockItems: LowStockItem[];
+}
+
 export default function Dashboard() {
   const { user, isKaryawan, canEdit, isAdmin } = useAuth();
   const themeColor = useThemeColor();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([]);
-  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
-  const [salesData, setSalesData] = useState<SalesChartData[]>([]);
-  const [popularMenuData, setPopularMenuData] = useState<PopularMenuData[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  // Heatmap state
-  const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
   const [heatmapDays, setHeatmapDays] = useState<'7' | '14' | '30'>('7');
-  const [heatmapLoading, setHeatmapLoading] = useState(false);
-
-  // Admin Filters
-  const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
 
-  useEffect(() => {
-    if (isAdmin()) {
-      fetchStores();
-    }
-  }, [user]);
+  // Daftar toko (khusus admin) — di-cache 5 menit
+  const { data: storesData } = useQuery<Store[]>({
+    queryKey: ['dashboard-stores'],
+    queryFn: async () => (await api.get('/stores-management')).data.data || [],
+    enabled: isAdmin(),
+    staleTime: 1000 * 60 * 5,
+  });
+  const stores = storesData ?? [];
 
-  useEffect(() => {
-    fetchDashboardData();
-  }, [selectedStoreId]);
-
-  // Fetch heatmap whenever days or store changes
-  useEffect(() => {
-    fetchHeatmap();
-  }, [heatmapDays, selectedStoreId]);
-
-  const fetchStores = async () => {
-    try {
-      const response = await api.get('/stores-management');
-      setStores(response.data.data || []);
-    } catch (error) {
-      console.error('Failed to fetch stores:', error);
-    }
-  };
-
-  const fetchHeatmap = async () => {
-    setHeatmapLoading(true);
-    try {
+  // Heatmap jam sibuk — refetch di background saat periode/toko berubah
+  const { data: heatmapData, isFetching: heatmapLoading } = useQuery<HeatmapData>({
+    queryKey: ['dashboard-heatmap', heatmapDays, selectedStoreId],
+    queryFn: async () => {
       const params: Record<string, string> = { days: heatmapDays };
       if (isAdmin() && selectedStoreId !== 'all') {
         params.store_id = selectedStoreId;
       }
-      const res = await api.get('/orders/report/hourly-heatmap', { params });
-      setHeatmapData(res.data);
-    } catch (e) {
-      console.error('Heatmap fetch error', e);
-    } finally {
-      setHeatmapLoading(false);
-    }
-  };
+      return (await api.get('/orders/report/hourly-heatmap', { params })).data;
+    },
+    placeholderData: keepPreviousData,
+  });
 
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
+  // Data utama dashboard — di-cache per toko, refetch otomatis saat tab kembali fokus
+  const { data: dashboard, isLoading: loading } = useQuery<DashboardData>({
+    queryKey: ['dashboard', selectedStoreId],
+    queryFn: () => fetchDashboardData(),
+    placeholderData: keepPreviousData,
+    refetchInterval: 1000 * 60 * 2, // segarkan tiap 2 menit di background
+  });
+
+  const stats = dashboard?.stats ?? null;
+  const lowStockItems = dashboard?.lowStockItems ?? [];
+  const recentOrders = dashboard?.recentOrders ?? [];
+  const salesData = dashboard?.salesData ?? [];
+  const popularMenuData = dashboard?.popularMenuData ?? [];
+
+  const fetchDashboardData = async (): Promise<DashboardData> => {
+    {
       const today = new Date().toISOString().split('T')[0];
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
 
@@ -236,14 +230,17 @@ export default function Dashboard() {
         dashStats.total_stores = stores.length;
       }
 
-      setRecentOrders(ordersRes.data.slice(0, 5));
+      const recentOrdersData: RecentOrder[] = ordersRes.data.slice(0, 5);
+      let lowStockList: LowStockItem[] = [];
+      let salesTrend: SalesChartData[] = [];
+      let popularMenu: PopularMenuData[] = [];
 
       // Fetch Inventory & Employees separately for better error handling
       if (canEdit()) {
         try {
           const inventoryRes = await api.get('/inventory', { params: { ...baseParams, type: 'stock' } });
           const lowStock = inventoryRes.data.filter((item: any) => item.is_low_stock);
-          setLowStockItems(lowStock);
+          lowStockList = lowStock;
           dashStats.low_stock_items = lowStock.length;
         } catch (error) {
           console.error('Failed to fetch inventory:', error);
@@ -262,9 +259,6 @@ export default function Dashboard() {
           dashStats.total_employees = 0;
         }
       }
-
-      // Set stats AFTER all data is fetched
-      setStats(dashStats);
 
       // --- Chart Data Processing ---
       const sevenDaysAgo = new Date();
@@ -304,7 +298,7 @@ export default function Dashboard() {
           }
         });
 
-        setSalesData(salesTrendDisplay.map(({ name, total }) => ({ name, total })));
+        salesTrend = salesTrendDisplay.map(({ name, total }) => ({ name, total }));
 
         // 2. Popular Menu (Profit Based)
         const menuStats: Record<string, { profit: number, sales: number }> = {};
@@ -321,28 +315,38 @@ export default function Dashboard() {
           });
         });
 
-        setPopularMenuData(Object.entries(menuStats)
+        popularMenu = Object.entries(menuStats)
           .map(([name, stat]) => ({ name, ...stat }))
           .sort((a, b) => b.sales - a.sales)
-          .slice(0, 5));
+          .slice(0, 5);
 
       } catch (e) {
         console.error("Chart data error", e);
       }
 
-    } catch (error) {
-      console.error('Failed to fetch dashboard data:', error);
-    } finally {
-      setLoading(false);
+      return {
+        stats: dashStats,
+        recentOrders: recentOrdersData,
+        salesData: salesTrend,
+        popularMenuData: popularMenu,
+        lowStockItems: lowStockList,
+      };
     }
   };
 
   if (loading && !stats) {
     return (
       <MainLayout>
-        <div className="p-8">
-          <div className="flex items-center justify-center py-12">
-            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <div className="p-8 space-y-6">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-56" />
+            <Skeleton className="h-4 w-80" />
+          </div>
+          <StatCardsSkeleton count={4} />
+          <Skeleton className="h-40 rounded-xl" />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Skeleton className="h-[400px] rounded-xl" />
+            <Skeleton className="h-[400px] rounded-xl" />
           </div>
         </div>
       </MainLayout>

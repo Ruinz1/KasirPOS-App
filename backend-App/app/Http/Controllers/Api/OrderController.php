@@ -899,6 +899,17 @@ class OrderController extends Controller
 
             DB::commit();
 
+            \App\Services\AuditLogger::log(
+                $request,
+                'order.batal',
+                "Batalkan order #{$order->daily_number} ({$order->customer_name}) senilai Rp " . number_format((float) $order->total, 0, ',', '.') . " (stok dikembalikan)",
+                'Order',
+                $order->id,
+                ['status' => 'active', 'total' => $order->total],
+                ['status' => 'cancelled'],
+                $order->store_id,
+            );
+
             return response()->json([
                 'message' => 'Order cancelled successfully and inventory restored',
                 'order' => $order

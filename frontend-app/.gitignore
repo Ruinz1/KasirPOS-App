@@ -33,3 +33,4 @@ dist-ssr
 # Vite cache
 .vite
 
+*.tsbuildinfo

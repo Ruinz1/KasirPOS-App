@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\MenuItem;
 use App\Models\MenuIngredient;
+use App\Services\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -180,6 +181,9 @@ class MenuController extends Controller
             'portion_value' => 'nullable|numeric|min:0.01',
         ]);
 
+        $oldPrice = (float) $menuItem->price;
+        $oldName = $menuItem->name;
+
         DB::beginTransaction();
         try {
             $menuItem->update([
@@ -233,6 +237,21 @@ class MenuController extends Controller
 
             DB::commit();
 
+            // Audit: catat perubahan harga menu
+            $newPrice = (float) $menuItem->price;
+            if (isset($validated['price']) && $newPrice !== $oldPrice) {
+                AuditLogger::log(
+                    $request,
+                    'menu.ubah_harga',
+                    "Ubah harga menu \"{$oldName}\" dari Rp " . number_format($oldPrice, 0, ',', '.') . " menjadi Rp " . number_format($newPrice, 0, ',', '.'),
+                    'MenuItem',
+                    $menuItem->id,
+                    ['price' => $oldPrice],
+                    ['price' => $newPrice],
+                    $menuItem->store_id,
+                );
+            }
+
             $menuItem->load('menuIngredients.inventoryItem');
             return response()->json($menuItem);
         } catch (\Exception $e) {
@@ -249,6 +268,17 @@ class MenuController extends Controller
         if (!$request->user()->hasPermission('manage_menu')) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
+
+        AuditLogger::log(
+            $request,
+            'menu.hapus',
+            "Hapus menu \"{$menuItem->name}\" (kategori: {$menuItem->category}, harga: Rp " . number_format((float) $menuItem->price, 0, ',', '.') . ")",
+            'MenuItem',
+            $menuItem->id,
+            ['name' => $menuItem->name, 'category' => $menuItem->category, 'price' => $menuItem->price],
+            null,
+            $menuItem->store_id,
+        );
 
         $menuItem->delete();
 

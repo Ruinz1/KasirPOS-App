@@ -4,6 +4,7 @@ import api from '@/lib/api';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { formatCurrency } from '@/utils/calculations';
 import { storageUrl } from '@/lib/utils';
+import { StatCardsSkeleton, TableSkeleton } from '@/components/skeletons';
 import { Badge } from '@/components/ui/badge';
 import {
   TrendingUp,
@@ -992,13 +993,9 @@ export default function ReportsPage() {
   if (authLoading || loading) {
     return (
       <MainLayout>
-        <div className="p-8">
-          <div className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-              <p>Memuat laporan...</p>
-            </div>
-          </div>
+        <div className="p-8 space-y-6">
+          <StatCardsSkeleton count={4} />
+          <TableSkeleton rows={8} cols={5} />
         </div>
       </MainLayout>
     );

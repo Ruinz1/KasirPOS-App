@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import api from "@/lib/api";
+import { StatCardsSkeleton, TableSkeleton } from "@/components/skeletons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -208,11 +209,9 @@ const OrderHistoryPage = () => {
     if (loading) {
         return (
             <MainLayout>
-                <div className="flex items-center justify-center h-screen">
-                    <div className="text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                        <p className="mt-4 text-muted-foreground">Memuat riwayat...</p>
-                    </div>
+                <div className="p-8 space-y-6">
+                    <StatCardsSkeleton count={4} />
+                    <TableSkeleton rows={8} cols={5} />
                 </div>
             </MainLayout>
         );

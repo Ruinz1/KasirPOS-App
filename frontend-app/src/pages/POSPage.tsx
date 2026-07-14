@@ -39,6 +39,9 @@ import Swal from 'sweetalert2';
 import { formatItemNote, storageUrl } from '@/lib/utils';
 import { MemberSearch } from '@/components/pos/MemberSearch';
 import type { Member, PointReward } from '@/types/member';
+import { queueOfflineOrder, isNetworkError } from '@/lib/offlineOrders';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
+import { WifiOff, RefreshCw } from 'lucide-react';
 
 
 
@@ -129,6 +132,7 @@ interface Store {
 
 export default function POSPage() {
   const { user, hasPermission, loading: authLoading, isAdmin, isOwner, isKaryawan } = useAuth();
+  const { isOnline, pendingCount: offlineOrderCount, syncNow: syncOfflineNow } = useOfflineSync();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false); // Mobile: keranjang tampil ringkas dulu, buka untuk lihat total & Bayar
@@ -975,7 +979,21 @@ export default function POSPage() {
           payload.store_id = selectedStoreId;
         }
 
-        const response = await api.post('/orders', payload);
+        let response;
+        try {
+          response = await api.post('/orders', payload);
+        } catch (orderError) {
+          // Offline mode: simpan transaksi ke antrian lokal, sync otomatis saat online
+          if (isNetworkError(orderError)) {
+            queueOfflineOrder(payload);
+            setShowPayment(false);
+            clearCart();
+            setEditingOrderId(null);
+            toast.warning('Internet terputus — transaksi disimpan offline & akan dikirim otomatis saat koneksi kembali', { duration: 6000 });
+            return;
+          }
+          throw orderError;
+        }
         setCurrentOrder(response.data);
         setShowPayment(false);
         clearCart();
@@ -1138,6 +1156,24 @@ export default function POSPage() {
 
   return (
     <MainLayout>
+      {/* Banner status offline / antrian transaksi offline */}
+      {(!isOnline || offlineOrderCount > 0) && (
+        <div className={`flex items-center justify-between gap-3 px-4 py-2 text-sm font-medium print:hidden ${!isOnline ? 'bg-destructive text-destructive-foreground' : 'bg-amber-500 text-white'}`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <WifiOff className="w-4 h-4 flex-shrink-0" />
+            <span className="truncate">
+              {!isOnline
+                ? `Mode offline — transaksi tetap bisa dibuat${offlineOrderCount > 0 ? ` (${offlineOrderCount} menunggu sync)` : ''}`
+                : `${offlineOrderCount} transaksi offline menunggu sinkronisasi`}
+            </span>
+          </div>
+          {isOnline && offlineOrderCount > 0 && (
+            <Button size="sm" variant="secondary" className="h-7 px-2 flex-shrink-0" onClick={() => void syncOfflineNow()}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Sync Sekarang
+            </Button>
+          )}
+        </div>
+      )}
       <div className="h-full flex flex-col md:flex-row">
         {/* Left - Menu Selection */}
         <div className="flex-1 p-3 md:p-6 overflow-y-auto">

@@ -10,6 +10,8 @@ import Swal from 'sweetalert2';
 import { memberApi } from '@/lib/memberApi';
 import type { Member, MemberRFM, PointTransaction } from '@/types/member';
 import { formatCurrency } from '@/utils/calculations';
+import { CardGridSkeleton } from '@/components/skeletons';
+import { Skeleton } from '@/components/ui/skeleton';
 
 type RfmType = 'spender' | 'frequency' | 'inactive';
 
@@ -227,7 +229,7 @@ export default function MembersPage() {
 
             {/* List */}
             {loading ? (
-              <div className="text-center py-12 text-muted-foreground">Memuat data...</div>
+              <CardGridSkeleton count={6} className="grid-cols-1" />
             ) : members.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <Star className="h-12 w-12 mx-auto mb-3 opacity-30" />
@@ -322,7 +324,7 @@ export default function MembersPage() {
 
             {/* RFM List */}
             {rfmLoading ? (
-              <div className="text-center py-12 text-muted-foreground">Memuat data...</div>
+              <CardGridSkeleton count={6} className="grid-cols-1" />
             ) : rfmData.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 {rfmType === 'inactive' ? (
@@ -455,7 +457,11 @@ export default function MembersPage() {
                   <History className="h-4 w-4" /> Riwayat Poin
                 </p>
                 {loadingDetail ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">Memuat...</p>
+                  <div className="space-y-2 py-1">
+                    <Skeleton className="h-9 w-full" />
+                    <Skeleton className="h-9 w-full" />
+                    <Skeleton className="h-9 w-3/4" />
+                  </div>
                 ) : !detailMember.point_transactions || detailMember.point_transactions.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">Belum ada riwayat poin</p>
                 ) : (

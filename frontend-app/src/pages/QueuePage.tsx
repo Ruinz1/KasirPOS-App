@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth, HOLD_QUEUE_POSITIONS } from "@/hooks/useAuth";
 import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, Pencil, RefreshCw } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { StatCardsSkeleton, CardGridSkeleton } from "@/components/skeletons";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
 import { Link } from "react-router-dom";
 import {
@@ -506,11 +507,9 @@ const QueuePage = () => {
     if (loading) {
         return (
             <MainLayout>
-                <div className="flex items-center justify-center h-screen">
-                    <div className="text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-                        <p className="mt-4 text-muted-foreground">Memuat antrian...</p>
-                    </div>
+                <div className="p-4 md:p-8 space-y-6">
+                    <StatCardsSkeleton count={4} />
+                    <CardGridSkeleton count={6} className="sm:grid-cols-2 lg:grid-cols-3" />
                 </div>
             </MainLayout>
         );

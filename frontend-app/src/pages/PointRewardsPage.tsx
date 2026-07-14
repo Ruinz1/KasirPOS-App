@@ -12,6 +12,7 @@ import Swal from 'sweetalert2';
 import { rewardApi } from '@/lib/memberApi';
 import api from '@/lib/api';
 import type { PointReward } from '@/types/member';
+import { CardGridSkeleton } from '@/components/skeletons';
 
 interface MenuItemOption {
   id: number;
@@ -163,7 +164,7 @@ export default function PointRewardsPage() {
 
         {/* Rewards List */}
         {loading ? (
-          <div className="text-center py-12 text-muted-foreground">Memuat...</div>
+          <CardGridSkeleton count={6} className="sm:grid-cols-2" />
         ) : rewards.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <Gift className="h-12 w-12 mx-auto mb-3 opacity-30" />
