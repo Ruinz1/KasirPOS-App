@@ -490,7 +490,7 @@ export default function POSPage() {
 
       // Auto print
       setTimeout(() => {
-        window.print();
+        printReceipt();
       }, 500);
 
       fetchPendingOrders();
@@ -895,7 +895,7 @@ export default function POSPage() {
 
         // Auto print after short delay
         setTimeout(() => {
-          window.print();
+          printReceipt();
         }, 500);
       } else if (addToOrderId) {
         // ADDING ITEMS TO EXISTING ORDER
@@ -935,7 +935,7 @@ export default function POSPage() {
 
           // Wait for render then print, then open settle
           setTimeout(() => {
-            window.print();
+            printReceipt();
 
             // After print, open settlement
             setTimeout(() => {
@@ -998,7 +998,7 @@ export default function POSPage() {
           // Auto print after short delay to allow rendering (only for paid orders)
           if (paymentStatus === 'paid') {
             setTimeout(() => {
-              window.print();
+              printReceipt();
             }, 500);
           }
         }
@@ -1057,7 +1057,7 @@ export default function POSPage() {
       if (response.data.payment_status === 'paid') {
         setShowReceipt(true);
         setTimeout(() => {
-          window.print();
+          printReceipt();
         }, 500);
         toast.success('Pembayaran berhasil dikonfirmasi');
       } else {
@@ -1072,8 +1072,38 @@ export default function POSPage() {
     }
   };
 
+  const printReceipt = () => {
+    const images = document.querySelectorAll<HTMLImageElement>('#receipt-print img');
+    const pending = Array.from(images).filter(img => !img.complete);
+
+    if (pending.length === 0) {
+      window.print();
+      return;
+    }
+
+    let remaining = pending.length;
+    let printed = false;
+    const doPrint = () => {
+      if (printed) return;
+      printed = true;
+      window.print();
+    };
+
+    pending.forEach(img => {
+      const onDone = () => {
+        remaining -= 1;
+        if (remaining <= 0) doPrint();
+      };
+      img.addEventListener('load', onDone, { once: true });
+      img.addEventListener('error', onDone, { once: true });
+    });
+
+    // Safety fallback in case an image never fires load/error
+    setTimeout(doPrint, 1000);
+  };
+
   const handlePrint = () => {
-    window.print();
+    printReceipt();
   };
 
   if (authLoading) {
@@ -3009,52 +3039,47 @@ export default function POSPage() {
             line-height: 1.3;
             color: #000;
             background: white;
-            font-weight: 600;
+            font-weight: 400;
           }
 
           #receipt-print h1 {
             font-size: 16px;
-            font-weight: 900;
+            font-weight: 700;
             color: #000 !important;
           }
 
           #receipt-print h2 {
-            font-weight: 900;
+            font-weight: 700;
             color: #000 !important;
           }
 
-          /* Ensure black and bold text for thermal printers */
-          * {
+          /* Ensure black text for thermal printers, but keep the preview's weight hierarchy */
+          #receipt-print * {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
             color: #000 !important;
-            font-weight: 600 !important;
-          }
-          
-          .text-muted-foreground {
-            color: #000 !important;
-            font-weight: 600 !important;
           }
 
-          /* Make all text elements bolder */
-          #receipt-print p,
-          #receipt-print span,
-          #receipt-print div {
+          #receipt-print .text-muted-foreground {
             color: #000 !important;
-            font-weight: 600 !important;
           }
 
-          /* Extra bold for important elements */
+          /* Match preview: only bold/semibold elements are bold, everything else stays regular */
           #receipt-print .font-bold,
           #receipt-print .font-semibold {
-            font-weight: 900 !important;
+            font-weight: 700 !important;
           }
 
-          /* Borders should be darker */
+          /* Keep border weight consistent with the on-screen preview (thin, not thick) */
           #receipt-print .border-black,
           #receipt-print .border-dashed {
             border-color: #000 !important;
-            border-width: 2px !important;
+          }
+
+          #receipt-print img {
+            display: block !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
         }
         
@@ -3137,7 +3162,7 @@ export default function POSPage() {
                   // Show receipt without table
                   setShowReceipt(true);
                   setReceiptMode('customer');
-                  setTimeout(() => window.print(), 500);
+                  setTimeout(() => printReceipt(), 500);
                 }}
                 className="flex-1 btn-outline"
               >
