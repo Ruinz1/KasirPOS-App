@@ -13,6 +13,44 @@ VPS sudah berjalan. Dokumen ini hanya alur **menerapkan perubahan terbaru**
   **Karena ini, frontend WAJIB di-build ulang** agar gambar muncul di VPS.
 - **Migrasi DB baru** (varian bahan menu & pengurangan stok per item).
 
+## Pengaturan Environment Variables (.env) di VPS
+
+File `.env` berisi data sensitif seperti kredensial database dan API keys, sehingga **tidak dimasukkan ke Git**. Berikut cara konfigurasi `.env` di VPS:
+
+### 1. Backend (Laravel) - `backend-App/.env`
+Di folder project VPS, buat file `.env` baru dari template `.env.example`:
+```bash
+cd backend-App
+cp .env.example .env
+nano .env
+```
+Sesuaikan konfigurasi berikut:
+*   `APP_ENV=production` dan `APP_DEBUG=false`
+*   `APP_URL=https://api.kedaiposapp.online` (URL domain backend API Anda)
+*   Koneksi Database (`DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` sesuai database VPS)
+*   Integrasi WhatsApp (`WHATSAPP_PROVIDER` diisi `meta` atau `gateway` beserta kredensial masing-masing)
+
+Setelah file `.env` disimpan, buat application key & jalankan migrasi di VPS:
+```bash
+php artisan key:generate
+php artisan jwt:secret
+php artisan migrate --force
+```
+
+### 2. Frontend (React / Vite) - `frontend-app/.env.production`
+Variabel env di frontend (Vite) akan ditanam langsung (hardcoded) ke dalam kode JS saat proses build.
+```bash
+cd ../frontend-app
+nano .env.production
+```
+Isi dengan:
+```env
+VITE_API_URL=https://api.kedaiposapp.online/api
+```
+*(PENTING: Akhiri dengan `/api`. Setiap kali file ini diubah, Anda wajib menjalankan `npm run build` ulang agar perubahannya diterapkan).*
+
+---
+
 ## Alur deploy (jalankan di VPS)
 
 ```bash
