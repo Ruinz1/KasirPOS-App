@@ -133,3 +133,101 @@ sudo systemctl reload nginx
 
 > Catatan: `VITE_API_URL` harus **berakhiran `/api`**. Helper `storageUrl()`
 > otomatis membuang `/api` saat menyusun URL file storage.
+
+## Setup Cloudflare (proxy domain, SSL, & halaman error saat server down)
+
+Tujuan: semua trafik `kedaiposapp.online` dan `api.kedaiposapp.online` lewat
+Cloudflare. Saat VPS mati/tidak terjangkau, pengunjung melihat halaman error
+Cloudflare (bukan timeout kosong), plus dapat SSL & proteksi DDoS gratis.
+
+### 1. Daftarkan domain
+
+1. Buat akun di [dash.cloudflare.com](https://dash.cloudflare.com) → **Add a site**
+   → masukkan `kedaiposapp.online` → pilih paket **Free**.
+2. Cloudflare menyalin DNS record otomatis. Pastikan dua record ini ada dan
+   **Proxy status = Proxied (awan oranye)**:
+
+   | Type | Name  | Content     | Proxy    |
+   |------|-------|-------------|----------|
+   | A    | `@`   | IP VPS Anda | Proxied  |
+   | A    | `api` | IP VPS Anda | Proxied  |
+
+3. Ganti nameserver di registrar domain Anda (tempat beli domain) ke dua
+   nameserver yang diberikan Cloudflare. Propagasi biasanya < 1 jam.
+
+### 2. Mode SSL — WAJIB "Full (strict)"
+
+**SSL/TLS → Overview → Full (strict)** (VPS sudah punya sertifikat Let's Encrypt).
+
+> Jangan pakai mode "Flexible" — menyebabkan redirect loop dengan Nginx yang
+> sudah redirect HTTP→HTTPS.
+
+Untuk perpanjangan sertifikat origin, dua pilihan:
+- **Tetap certbot**: perpanjangan HTTP-01 tetap jalan di belakang proxy selama
+  mode Full (strict) dan path `/.well-known/acme-challenge/` tidak diblokir.
+- **Lebih awet — Origin Certificate**: **SSL/TLS → Origin Server → Create
+  Certificate** (berlaku 15 tahun), pasang di Nginx menggantikan certbot.
+  Sertifikat ini hanya dipercaya Cloudflare, jadi proxy oranye tidak boleh
+  dimatikan lagi.
+
+### 3. Aturan cache — jangan cache API & service worker
+
+**Caching → Cache Rules**, buat 2 rule:
+
+1. **Bypass API** — If URI Path starts with `/api/` → **Bypass cache**
+   (untuk hostname `api.kedaiposapp.online` bisa juga bypass semua path).
+2. **Service worker selalu segar** — If URI Path equals `/sw.js` → **Bypass
+   cache**. Tanpa ini update aplikasi PWA bisa telat sampai ke kasir.
+
+### 4. Kembalikan IP asli pengunjung (penting untuk Audit Log)
+
+Di belakang proxy, Nginx melihat IP Cloudflare — kolom IP di halaman Audit Log
+jadi tidak akurat. Tambahkan di config Nginx (http block atau file
+`/etc/nginx/conf.d/cloudflare-realip.conf`):
+
+```nginx
+# Daftar lengkap & terbaru: https://www.cloudflare.com/ips/
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
+real_ip_header CF-Connecting-IP;
+```
+
+Lalu `sudo nginx -t && sudo systemctl reload nginx`.
+
+### 5. Opsional tapi berguna
+
+- **Always Online** (Caching → Configuration): saat VPS down, Cloudflare
+  menyajikan salinan halaman dari cache — pengunjung masih melihat sesuatu.
+- **Speed → Optimization → Brotli**: aktifkan (kompresi lebih kecil dari gzip).
+- **Firewall**: kalau mau ketat, izinkan port 80/443 VPS hanya dari IP range
+  Cloudflare di atas, supaya orang tidak bisa mem-bypass proxy langsung ke IP.
+
+### 6. Verifikasi
+
+1. `curl -I https://kedaiposapp.online` → ada header `server: cloudflare` dan
+   `cf-ray: ...` → trafik sudah lewat proxy.
+2. Aplikasi login & transaksi normal, gambar storage tetap muncul.
+3. Tes halaman error: `sudo systemctl stop nginx` sebentar → buka situs →
+   muncul halaman error Cloudflare (bukan timeout) → `sudo systemctl start nginx`.
+4. Halaman Audit Log menampilkan IP pengunjung asli, bukan IP `172.x/104.x`
+   milik Cloudflare.
