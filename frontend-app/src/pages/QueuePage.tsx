@@ -1,12 +1,13 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import api from "@/lib/api";
+import { isBonusItemNote } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth, HOLD_QUEUE_POSITIONS } from "@/hooks/useAuth";
-import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, Pencil, RefreshCw } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, Pencil, RefreshCw, Maximize2, Minimize2, Timer } from "lucide-react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { StatCardsSkeleton, CardGridSkeleton } from "@/components/skeletons";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
@@ -18,6 +19,7 @@ import {
     DialogTitle,
     DialogFooter,
 } from "@/components/ui/dialog";
+import { useOrderElapsed, formatElapsed, getElapsedColorClass, isUrgent, isWarning } from "@/hooks/useOrderElapsed";
 
 interface OrderItem {
     id: number;
@@ -97,6 +99,27 @@ const isDrinkItem = (item: OrderItem) => {
     return DRINK_CATEGORIES.includes(cat);
 };
 
+// Timer berjalan per pesanan — sama seperti di halaman Antrian Makanan/Minuman
+// (hijau < 10 menit, kuning 10–15 menit, merah > 15 menit)
+const QueueTimer = ({ createdAt, active }: { createdAt: string; active: boolean }) => {
+    const elapsed = useOrderElapsed(createdAt);
+    if (!active) return null;
+    const urgent = isUrgent(elapsed);
+    const warning = isWarning(elapsed);
+    return (
+        <div className={`flex flex-col items-center ml-2 shrink-0 px-2 py-1 rounded-xl border-2 ${
+            urgent ? "border-red-500 bg-red-50 dark:bg-red-900/20"
+            : warning ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20"
+            : "border-green-300 bg-green-50/50 dark:bg-green-900/10"
+        }`}>
+            <Timer className={`h-3 w-3 mb-0.5 ${urgent ? "text-red-500" : warning ? "text-yellow-500" : "text-green-500"}`} />
+            <span className={`text-sm leading-none tabular-nums ${getElapsedColorClass(elapsed)}`}>
+                {formatElapsed(elapsed)}
+            </span>
+        </div>
+    );
+};
+
 const QueuePage = () => {
     const [orders, setOrders] = useState<QueueOrder[]>([]);
     const [statistics, setStatistics] = useState<QueueStatistics>({
@@ -119,6 +142,27 @@ const QueuePage = () => {
     // Hold terpisah untuk makanan & minuman — hold makanan TIDAK menahan minuman, dan sebaliknya
     const [holdTarget, setHoldTarget] = useState<{ order: QueueOrder; type: "food" | "drink" } | null>(null);
     const [holdReason, setHoldReason] = useState("");
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // ── Fullscreen handler (sama seperti Antrian Makanan/Minuman) ──────────
+    const toggleFullscreen = useCallback(() => {
+        if (!document.fullscreenElement) {
+            containerRef.current?.requestFullscreen().catch(() => {});
+            setIsFullscreen(true);
+        } else {
+            document.exitFullscreen().catch(() => {});
+            setIsFullscreen(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const onFsChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener("fullscreenchange", onFsChange);
+        return () => document.removeEventListener("fullscreenchange", onFsChange);
+    }, []);
 
     // Helper: Apakah order ini harus disembunyikan dari antrian?
     // Order tersembunyi HANYA jika SEMUA section yang ada sudah selesai:
@@ -515,52 +559,91 @@ const QueuePage = () => {
         );
     }
 
-    return (
-        <MainLayout>
-            <div className="p-8 space-y-6">
+    const pageContent = (
+        <div
+            ref={containerRef}
+            className={isFullscreen ? "min-h-screen overflow-y-auto bg-background" : ""}
+        >
+            <div className={isFullscreen ? "p-4 space-y-4" : "p-8 space-y-6"}>
                 {/* Header */}
-                <div className="flex items-center justify-between">
+                <div className={`flex items-center justify-between ${isFullscreen ? "sticky top-0 z-10 -m-4 mb-0 px-4 py-3 bg-background/95 backdrop-blur border-b" : ""}`}>
                     <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
-                            <h1 className="text-3xl font-display font-bold">Daftar Antrian</h1>
+                            <h1 className={`font-display font-bold ${isFullscreen ? "text-xl" : "text-3xl"}`}>Daftar Antrian</h1>
                             <Badge className="bg-green-500 text-white animate-pulse">
                                 ● LIVE
                             </Badge>
                         </div>
-                        <p className="text-muted-foreground">
-                            Antrian pesanan hari ini ({new Date().toLocaleDateString('id-ID', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric'
-                            })})
-                        </p>
-                        <div className="flex items-center gap-4 mt-1">
-                            <p className="text-xs text-muted-foreground flex items-center gap-2">
-                                <span className="relative flex h-2 w-2">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                                </span>
-                                Menunggu pesanan baru...
+                        {!isFullscreen && (
+                            <p className="text-muted-foreground">
+                                Antrian pesanan hari ini ({new Date().toLocaleDateString('id-ID', {
+                                    weekday: 'long',
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                })})
                             </p>
-                            <button
-                                onClick={() => {
-                                    playNotificationSound();
-                                    setTimeout(() => speakNewOrder(), 800);
-                                }}
-                                className="text-[10px] text-muted-foreground underline hover:text-primary"
-                                title="Klik untuk tes suara notifikasi & TTS"
-                            >
-                                Tes Suara
-                            </button>
-                        </div>
+                        )}
+                        {!isFullscreen && (
+                            <div className="flex items-center gap-4 mt-1">
+                                <p className="text-xs text-muted-foreground flex items-center gap-2">
+                                    <span className="relative flex h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                    </span>
+                                    Menunggu pesanan baru...
+                                </p>
+                                <button
+                                    onClick={() => {
+                                        playNotificationSound();
+                                        setTimeout(() => speakNewOrder(), 800);
+                                    }}
+                                    className="text-[10px] text-muted-foreground underline hover:text-primary"
+                                    title="Klik untuk tes suara notifikasi & TTS"
+                                >
+                                    Tes Suara
+                                </button>
+                            </div>
+                        )}
                     </div>
-                    <Button onClick={() => { fetchQueue(); fetchStatistics(); }} variant="outline">
-                        Refresh Manual
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        {/* Statistik ringkas saat fullscreen */}
+                        {isFullscreen && (
+                            <div className="hidden sm:flex items-center gap-4 bg-muted/60 rounded-2xl px-4 py-2 mr-1">
+                                <div className="text-center">
+                                    <div className="font-bold text-lg leading-none">{statistics.completed_today}</div>
+                                    <div className="text-[10px] text-muted-foreground">Selesai</div>
+                                </div>
+                                <div className="w-px h-7 bg-border" />
+                                <div className="text-center">
+                                    <div className="font-bold text-lg leading-none">{statistics.pending}</div>
+                                    <div className="text-[10px] text-muted-foreground">Menunggu</div>
+                                </div>
+                                <div className="w-px h-7 bg-border" />
+                                <div className="text-center">
+                                    <div className="font-bold text-lg leading-none">{statistics.total_in_queue}</div>
+                                    <div className="text-[10px] text-muted-foreground">Antrian</div>
+                                </div>
+                            </div>
+                        )}
+                        <Button onClick={() => { fetchQueue(); fetchStatistics(); }} variant="outline" size={isFullscreen ? "sm" : "default"}>
+                            <RefreshCw className="h-4 w-4" />
+                            {!isFullscreen && <span className="ml-1">Refresh Manual</span>}
+                        </Button>
+                        {/* Fullscreen Toggle */}
+                        <Button
+                            onClick={toggleFullscreen}
+                            variant="outline"
+                            size={isFullscreen ? "sm" : "default"}
+                            title={isFullscreen ? "Keluar Fullscreen" : "Mode Fullscreen"}
+                        >
+                            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                        </Button>
+                    </div>
                 </div>
 
                 {/* Statistics Cards */}
+                {!isFullscreen && (
                 <div className="grid gap-4 md:grid-cols-4">
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -606,8 +689,10 @@ const QueuePage = () => {
                         </CardContent>
                     </Card>
                 </div>
+                )}
 
                 {/* Shortcut ke halaman terpisah */}
+                {!isFullscreen && (
                 <div className="grid grid-cols-2 gap-4">
                     <Link to="/queue/food" className="group">
                         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-orange-400 to-amber-500 text-white p-6 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer">
@@ -638,6 +723,7 @@ const QueuePage = () => {
                         </div>
                     </Link>
                 </div>
+                )}
 
                 {/* Queue List - Split Panel: Makanan & Minuman */}
                 {orders.length === 0 ? (
@@ -731,6 +817,7 @@ const QueuePage = () => {
                                                             {order.table && <div className="flex items-center gap-1 mt-1"><Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-primary text-primary font-bold bg-primary/10">🪑 Meja {order.table.table_number}</Badge></div>}
                                                             <p className="text-xs text-muted-foreground">{formatTime(order.created_at)}</p>
                                                         </div>
+                                                        <QueueTimer createdAt={order.created_at} active={!foodCompleted && !foodHold} />
                                                     </div>
                                                     {/* Alasan hold makanan */}
                                                     {foodHold && order.hold_reason && (
@@ -750,6 +837,7 @@ const QueuePage = () => {
                                                             {foodItems.map(item => (
                                                                 <div key={item.id} className={`text-xs ${item.is_addon ? 'bg-purple-100 dark:bg-purple-900/40 p-1 rounded border border-purple-200 dark:border-purple-800' : ''}`}>
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
+                                                                    {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
                                                                     {item.is_takeaway && <span className="text-destructive font-semibold ml-1">(Bungkus)</span>}
                                                                     {item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
                                                                     {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
@@ -888,6 +976,7 @@ const QueuePage = () => {
                                                             {order.table && <div className="flex items-center gap-1 mt-1"><Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-primary text-primary font-bold bg-primary/10">🪑 Meja {order.table.table_number}</Badge></div>}
                                                             <p className="text-xs text-muted-foreground">{formatTime(order.created_at)}</p>
                                                         </div>
+                                                        <QueueTimer createdAt={order.created_at} active={!drinkCompleted && !drinkHold} />
                                                     </div>
                                                     {/* Alasan hold minuman (terpisah dari makanan) */}
                                                     {drinkHold && order.drink_hold_reason && (
@@ -907,6 +996,7 @@ const QueuePage = () => {
                                                             {drinkItems.map(item => (
                                                                 <div key={item.id} className={`text-xs ${item.is_addon ? 'bg-purple-100 dark:bg-purple-900/40 p-1 rounded border border-purple-200 dark:border-purple-800' : ''}`}>
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
+                                                                    {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
                                                                     {item.is_takeaway && <span className="text-destructive font-semibold ml-1">(Bungkus)</span>}
                                                                     {item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
                                                                     {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
@@ -969,8 +1059,11 @@ const QueuePage = () => {
                     </div>
                 )}
             </div>
+        </div>
+    );
 
-
+    const dialogs = (
+        <>
             {/* Hold Dialog — makanan & minuman ditahan terpisah */}
             <Dialog open={!!holdTarget} onOpenChange={(open) => !open && setHoldTarget(null)}>
                 <DialogContent className="sm:max-w-md">
@@ -1014,6 +1107,19 @@ const QueuePage = () => {
                     fetchStatistics();
                 }}
             />
+        </>
+    );
+
+    // Fullscreen: tampil tanpa sidebar/layout (sama seperti Antrian Makanan/Minuman)
+    return isFullscreen ? (
+        <>
+            {pageContent}
+            {dialogs}
+        </>
+    ) : (
+        <MainLayout>
+            {pageContent}
+            {dialogs}
         </MainLayout>
     );
 };

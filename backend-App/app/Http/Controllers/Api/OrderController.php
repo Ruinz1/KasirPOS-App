@@ -257,6 +257,7 @@ class OrderController extends Controller
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.note' => 'nullable|string',
             'items.*.is_takeaway' => 'boolean',
+            'items.*.is_bonus' => 'nullable|boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
             'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
             'items.*.selected_type_id' => 'nullable|integer|exists:menu_ingredients,id',
@@ -346,6 +347,15 @@ class OrderController extends Controller
                 $discountedPrice = $menuItem->getDiscountedPrice();
                 $additionalPrice = isset($item['additional_price']) ? (float)$item['additional_price'] : 0;
                 $finalPrice = $discountedPrice + $additionalPrice;
+
+                // Item bonus tukar poin: gratis (harga 0), hanya sah bila ada member yang menukar poin.
+                $isBonus = !empty($item['is_bonus']);
+                if ($isBonus) {
+                    if (!$member || $pointsRedeemed <= 0) {
+                        throw new \Exception("Item bonus hanya berlaku untuk penukaran poin member");
+                    }
+                    $finalPrice = 0;
+                }
 
                 OrderItem::create([
                     'order_id' => $order->id,
@@ -581,6 +591,7 @@ class OrderController extends Controller
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.note' => 'nullable|string',
             'items.*.is_takeaway' => 'boolean',
+            'items.*.is_bonus' => 'nullable|boolean',
             'items.*.additional_price' => 'nullable|numeric|min:0',
             'items.*.variant_stock_deduction' => 'nullable|numeric|min:0',
             'items.*.selected_type_id' => 'nullable|integer|exists:menu_ingredients,id',
@@ -626,6 +637,11 @@ class OrderController extends Controller
                 $discountedPrice = $menuItem->getDiscountedPrice();
                 $additionalPrice = isset($item['additional_price']) ? (float)$item['additional_price'] : 0;
                 $finalPrice = $discountedPrice + $additionalPrice;
+
+                // Pertahankan harga 0 untuk item bonus tukar poin milik pesanan ini.
+                if (!empty($item['is_bonus']) && (int)$order->points_redeemed > 0) {
+                    $finalPrice = 0;
+                }
 
                 OrderItem::create([
                     'order_id' => $order->id,

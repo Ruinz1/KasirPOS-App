@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import api from "@/lib/api";
+import { isBonusItemNote } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -315,6 +316,7 @@ const OrderCard = ({
                                 <div className="flex items-baseline gap-1">
                                     <span className={`font-black text-sm ${isReactivated ? "text-red-600" : "text-orange-600"}`}>{item.quantity}×</span>
                                     <span className={`font-medium truncate ${isFullscreen ? "text-sm" : ""}`}>{item.menu_item?.name || "Item Dihapus"}</span>
+                                    {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
                                     {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
                                     {!isReactivated && item.is_addon && (
                                         <span className="text-purple-600 text-[10px] font-bold ml-1">● BARU</span>

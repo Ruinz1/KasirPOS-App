@@ -66,3 +66,8 @@ export function formatItemNote(noteText: string | null | undefined, menuName: st
   return noteText;
 }
 
+// Item gratis hasil tukar poin reward — note-nya diberi penanda "Bonus Tukar X Poin" oleh kasir (POS).
+export function isBonusItemNote(noteText: string | null | undefined): boolean {
+  return /\bBonus Tukar\s*\d*\s*Poin\b/i.test(noteText || '');
+}
+

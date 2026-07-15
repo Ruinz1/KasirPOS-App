@@ -88,7 +88,12 @@ interface CartItem {
   selected_type_id?: number;              // inventory_item_id tipe terpilih (dari bahan role=option)
   selected_type_name?: string;            // label tampil tipe terpilih
   removed_ingredient_ids?: number[];      // inventory_item_id bahan opsional yang dihilangkan
+  is_bonus?: boolean;                     // item gratis hasil tukar poin reward (harga 0)
+  bonus_points?: number;                  // jumlah poin yang ditukar untuk item bonus ini
 }
+
+// Deteksi item bonus tukar poin dari note tersimpan (untuk mode edit pesanan)
+const BONUS_NOTE_REGEX = /\bBonus Tukar\s*(\d+)?\s*Poin\b/i;
 
 const BAKSO_VARIANTS = [
   { name: 'Kuah Coto', price: 0 },
@@ -262,11 +267,18 @@ export default function POSPage() {
             .map(mi => mi.id);
         }
 
+        // Deteksi item bonus tukar poin dari note tersimpan
+        const bonusMatch = noteText.match(BONUS_NOTE_REGEX);
+        const isBonus = !!bonusMatch;
+        const bonusPoints = bonusMatch?.[1] ? Number(bonusMatch[1]) : undefined;
+
         // Separate user note from prefixes
         const userNote = noteText
           .replace(/^(?:Kuah|Variasi):\s*[^.]+\.?\s*/i, '')
           .replace(/Tipe:\s*[^.]+\.?\s*/i, '')
           .replace(/Tanpa:\s*[^.]+\.?\s*/i, '')
+          .replace(BONUS_NOTE_REGEX, '')
+          .replace(/^[.\s]+|[.\s]+$/g, '')
           .trim() || undefined;
 
         // Try to find variant price from menu item variants
@@ -295,6 +307,8 @@ export default function POSPage() {
           selected_type_id: selectedTypeId,
           selected_type_name: selectedTypeName,
           removed_ingredient_ids: removedIds,
+          is_bonus: isBonus,
+          bonus_points: bonusPoints,
         };
       });
       setCart(cartItems);
@@ -528,6 +542,7 @@ export default function POSPage() {
       c.bakso_type || 'none',
       c.selected_type_id ?? 'none',
       removed || 'none',
+      c.is_bonus ? 'bonus' : 'normal',
     ].join('_');
   };
 
@@ -558,7 +573,8 @@ export default function POSPage() {
     return options.find(o => o.is_default) || options[0];
   };
 
-  const addToCart = (item: MenuItem) => {
+  // Bangun baris keranjang baru dengan default variasi/Tipe sebuah menu.
+  const buildCartItem = (item: MenuItem): CartItem => {
     const variants = getItemVariants(item);
     let variantPayload: { variant?: string; variant_price?: number; variant_stock_deduction?: number } = {};
 
@@ -588,7 +604,7 @@ export default function POSPage() {
     const isBaksoSpesial = item.name.toLowerCase().includes('bakso') && item.name.toLowerCase().includes('spesial');
     const defaultBaksoType = (!defaultType && isBaksoSpesial) ? 'Tenis' : undefined;
 
-    const newItem: CartItem = {
+    return {
       menuItem: item,
       quantity: 1,
       is_takeaway: false,
@@ -597,6 +613,10 @@ export default function POSPage() {
       ...typePayload,
       ...variantPayload,
     };
+  };
+
+  const addToCart = (item: MenuItem) => {
+    const newItem = buildCartItem(item);
 
     // Gabungkan dengan baris keranjang identik (kustomisasi sama).
     const newKey = getCartItemKey(newItem);
@@ -609,7 +629,43 @@ export default function POSPage() {
     }
   };
 
+  // Sinkronkan reward tukar poin dengan keranjang:
+  // menu bonus otomatis masuk sebagai item gratis (harga 0) dengan keterangan potongan poin.
+  const handleRewardSelect = (reward: PointReward | null) => {
+    // Penukaran poin hanya diproses saat membuat pesanan baru (bukan edit/tambah item)
+    if (reward && (editingOrderId || addToOrderId)) {
+      toast.error('Tukar poin hanya bisa untuk pesanan baru');
+      return;
+    }
+    setSelectedReward(reward);
+    setCart(prev => {
+      const withoutBonus = prev.filter(c => !c.is_bonus);
+      if (reward?.menu_item) {
+        const fullMenu = menuItems.find(m => m.id === reward.menu_item!.id);
+        const menuForBonus: MenuItem = fullMenu || {
+          id: reward.menu_item.id,
+          name: reward.menu_item.name,
+          category: '',
+          price: reward.menu_item.price,
+        };
+        const bonusItem: CartItem = {
+          ...buildCartItem(menuForBonus),
+          is_bonus: true,
+          bonus_points: reward.points_required,
+        };
+        return [...withoutBonus, bonusItem];
+      }
+      return withoutBonus;
+    });
+  };
+
   const removeFromCart = (cartKey: string) => {
+    // Menghapus item bonus dari keranjang = membatalkan reward tukar poin.
+    const target = cart.find((c) => getCartItemKey(c) === cartKey);
+    if (target?.is_bonus) {
+      setSelectedReward(null);
+      toast.info('Reward tukar poin dibatalkan');
+    }
     setCart(cart.filter((c) => {
       const key = getCartItemKey(c);
       return key !== cartKey;
@@ -723,6 +779,7 @@ export default function POSPage() {
   };
 
   const cartTotal = cart.reduce((sum, item) => {
+    if (item.is_bonus) return sum; // bonus tukar poin = gratis, tidak menambah tagihan
     const basePrice = getDiscountedPrice(item.menuItem);
     const variantPrice = Number(item.variant_price || 0);
     return sum + ((basePrice + variantPrice) * item.quantity);
@@ -770,16 +827,17 @@ export default function POSPage() {
           <div class="max-h-[40vh] overflow-y-auto mb-4 border rounded-md p-2 bg-gray-50 dark:bg-gray-800">
             <ul class="space-y-2 text-sm text-gray-700 dark:text-gray-300">
               ${cart.map(item => {
-        const itemPrice = (getDiscountedPrice(item.menuItem) + Number(item.variant_price || 0)) * item.quantity;
+        const itemPrice = item.is_bonus ? 0 : (getDiscountedPrice(item.menuItem) + Number(item.variant_price || 0)) * item.quantity;
         return `
                 <li class="flex justify-between border-b border-dashed border-gray-300 dark:border-gray-600 pb-1 last:border-0">
                   <div class="pr-2">
-                    <span class="font-bold text-primary">${item.quantity}x</span> 
-                    ${item.menuItem.name} 
+                    <span class="font-bold text-primary">${item.quantity}x</span>
+                    ${item.menuItem.name}
+                    ${item.is_bonus ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700">BONUS -${item.bonus_points || 0} poin</span>` : ''}
                     ${item.variant ? `<br/><span class="text-xs text-muted-foreground ml-4">(${item.variant})</span>` : ''}
                     ${item.note ? `<br/><span class="text-xs text-muted-foreground ml-4 italic">"${item.note}"</span>` : ''}
                   </div>
-                  <span class="font-medium whitespace-nowrap">${formatCurrency(itemPrice)}</span>
+                  <span class="font-medium whitespace-nowrap ${item.is_bonus ? 'text-green-600 font-bold' : ''}">${item.is_bonus ? 'GRATIS' : formatCurrency(itemPrice)}</span>
                 </li>
                 `
       }).join('')}
@@ -860,14 +918,17 @@ export default function POSPage() {
         }
 
         const userNote = c.note || '';
-        const combinedNote = [variantNote, typeNote, removedNote, userNote].filter(Boolean).join('. ');
+        // Keterangan bonus masuk ke note supaya tampil di antrian (makanan/minuman) & struk
+        const bonusNote = c.is_bonus ? `Bonus Tukar ${c.bonus_points || 0} Poin` : '';
+        const combinedNote = [variantNote, typeNote, removedNote, userNote, bonusNote].filter(Boolean).join('. ');
 
         return {
           menu_item_id: c.menuItem.id,
           quantity: c.quantity,
           note: combinedNote || null,
           is_takeaway: Boolean(c.is_takeaway),
-          additional_price: Number(c.variant_price || 0),
+          is_bonus: Boolean(c.is_bonus),
+          additional_price: c.is_bonus ? 0 : Number(c.variant_price || 0),
           variant_stock_deduction: Number((c as any).variant_stock_deduction ?? 1),
           selected_type_id: c.selected_type_id ?? null,
           removed_ingredient_ids: removedIds,
@@ -2148,7 +2209,7 @@ export default function POSPage() {
                   if (m) setCustomerName(m.name);
                   else setCustomerName('');
                 }}
-                onRewardSelect={setSelectedReward}
+                onRewardSelect={handleRewardSelect}
               />
             )}
             {!selectedMember && (
@@ -2183,11 +2244,22 @@ export default function POSPage() {
                 const cartKey = getCartItemKey(item);
 
                 return (
-                  <div key={cartKey} className="bg-secondary/50 rounded-lg p-4">
+                  <div key={cartKey} className={`rounded-lg p-4 ${item.is_bonus ? 'bg-green-50 border border-green-300' : 'bg-secondary/50'}`}>
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1">
-                        <h4 className="font-medium text-sm">{item.menuItem.name}</h4>
-                        {item.menuItem.discount_percentage && item.menuItem.discount_percentage > 0 ? (
+                        <h4 className="font-medium text-sm flex items-center gap-1.5 flex-wrap">
+                          {item.menuItem.name}
+                          {item.is_bonus && (
+                            <span className="px-1.5 py-0.5 rounded bg-green-600 text-white text-[10px] font-bold uppercase">🎁 Bonus</span>
+                          )}
+                        </h4>
+                        {item.is_bonus ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs line-through text-muted-foreground">{formatCurrency(item.menuItem.price)}</span>
+                            <span className="text-sm text-green-700 font-semibold">GRATIS</span>
+                            <span className="text-[10px] text-green-700 font-medium">(-{item.bonus_points || 0} poin)</span>
+                          </div>
+                        ) : item.menuItem.discount_percentage && item.menuItem.discount_percentage > 0 ? (
                           <div className="flex items-center gap-2">
                             <span className="text-xs line-through text-muted-foreground">{formatCurrency(item.menuItem.price)}</span>
                             <span className="text-sm text-destructive font-semibold">
@@ -2363,6 +2435,11 @@ export default function POSPage() {
                     )}
 
                     <div className="flex items-center justify-between">
+                      {item.is_bonus ? (
+                        <span className="text-xs font-semibold text-green-700 bg-green-100 border border-green-300 rounded-md px-2 py-1">
+                          1x &bull; Tukar Poin
+                        </span>
+                      ) : (
                       <div className="flex items-center gap-2">
                         <button
                           className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center hover:bg-secondary"
@@ -2399,8 +2476,9 @@ export default function POSPage() {
                           <Plus className="w-4 h-4" />
                         </button>
                       </div>
-                      <span className="font-semibold">
-                        {formatCurrency((getDiscountedPrice(item.menuItem) + Number(item.variant_price || 0)) * item.quantity)}
+                      )}
+                      <span className={`font-semibold ${item.is_bonus ? 'text-green-700' : ''}`}>
+                        {item.is_bonus ? 'GRATIS' : formatCurrency((getDiscountedPrice(item.menuItem) + Number(item.variant_price || 0)) * item.quantity)}
                       </span>
                     </div>
                   </div>
@@ -2969,16 +3047,18 @@ export default function POSPage() {
             {/* Items */}
             <div className="mb-2 pb-1 border-b border-dashed border-black space-y-1">
               {currentOrder.items?.map((item: any, idx: number) => {
+                const isBonusItem = BONUS_NOTE_REGEX.test(item.note || '');
                 return (
                   <div key={idx} className="text-[10px] leading-tight">
                     <div className="font-bold flex items-center gap-1">
                       {item.menu_item.name}
+                      {isBonusItem && <span className="text-[9px] uppercase font-bold border border-black px-0.5 rounded-sm">Bonus</span>}
                       {item.is_takeaway && <span className="text-[9px] uppercase font-normal border border-black px-0.5 rounded-sm">Bungkus</span>}
                     </div>
                     {item.note && <div className="italic text-[9px] mb-0.5">- {formatItemNote(item.note, item.menu_item.name)}</div>}
                     <div className="flex justify-between">
-                      <span>{item.quantity} x {formatCurrency(item.price)}</span>
-                      <span className="font-semibold">{formatCurrency(item.quantity * item.price)}</span>
+                      <span>{item.quantity} x {isBonusItem ? 'TUKAR POIN' : formatCurrency(item.price)}</span>
+                      <span className="font-semibold">{isBonusItem ? 'GRATIS' : formatCurrency(item.quantity * item.price)}</span>
                     </div>
                   </div>
                 );
@@ -2987,6 +3067,12 @@ export default function POSPage() {
 
             {/* Totals */}
             <div className="mb-2 text-[10px] space-y-0.5">
+              {Number((currentOrder as any).points_redeemed) > 0 && (
+                <div className="flex justify-between">
+                  <span>Tukar Poin (Bonus)</span>
+                  <span className="font-semibold">-{(currentOrder as any).points_redeemed} poin</span>
+                </div>
+              )}
               <div className="flex justify-between font-bold text-xs">
                 <span>TOTAL</span>
                 <span>{formatCurrency(currentOrder.total)}</span>
