@@ -94,7 +94,7 @@ class WhatsAppNotifier
 
             $parameters = [];
             foreach ($variables as $key => $value) {
-                $param = ['type' => 'text', 'text' => (string) $value];
+                $param = ['type' => 'text', 'text' => self::sanitizeParam($value)];
                 if ($isNamed) {
                     $param['parameter_name'] = (string) $key;
                 }
@@ -161,7 +161,7 @@ class WhatsAppNotifier
                             [
                                 'type' => 'body',
                                 'parameters' => array_map(
-                                    fn ($value) => ['type' => 'text', 'text' => (string) $value],
+                                    fn ($value) => ['type' => 'text', 'text' => self::sanitizeParam($value)],
                                     $variables
                                 ),
                             ],
@@ -184,6 +184,15 @@ class WhatsAppNotifier
             Log::warning('WhatsApp notification error: ' . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * Meta menolak parameter template yang mengandung newline, tab,
+     * atau lebih dari 4 spasi beruntun — rapikan jadi satu spasi.
+     */
+    private static function sanitizeParam(mixed $value): string
+    {
+        return trim(preg_replace('/\s+/u', ' ', (string) $value));
     }
 
     private static function normalizePhone(string $phone): string

@@ -1057,6 +1057,16 @@ export default function POSPage() {
         }
         setCurrentOrder(response.data);
         setShowPayment(false);
+
+        // Feedback status kirim template WA info poin ke member (lunas + dapat/menukar poin)
+        if (response.data.member_id && sendPointsWa && paymentStatus === 'paid') {
+          if (response.data.points_wa_sent) {
+            toast.success('Info poin & reward terkirim ke WhatsApp member');
+          } else if (Number(response.data.points_earned || 0) > 0 || Number(response.data.points_redeemed || 0) > 0) {
+            toast.warning('Info poin gagal terkirim ke WhatsApp member — cek koneksi/template WA');
+          }
+        }
+
         clearCart();
         setEditingOrderId(null);
 
@@ -1139,6 +1149,15 @@ export default function POSPage() {
           printReceipt();
         }, 500);
         toast.success('Pembayaran berhasil dikonfirmasi');
+
+        // Feedback status kirim template WA info poin ke member
+        if (response.data.member_id && sendPointsWa) {
+          if (response.data.points_wa_sent) {
+            toast.success('Info poin & reward terkirim ke WhatsApp member');
+          } else if (Number(response.data.points_earned || 0) > 0 || Number(response.data.points_redeemed || 0) > 0) {
+            toast.warning('Info poin gagal terkirim ke WhatsApp member — cek koneksi/template WA');
+          }
+        }
       } else {
         // Payment was insufficient, order remains pending
         toast.warning('Pembayaran kurang dari total. Pesanan masih dalam status pending.');

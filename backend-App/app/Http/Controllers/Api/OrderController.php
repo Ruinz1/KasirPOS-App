@@ -432,14 +432,20 @@ class OrderController extends Controller
 
             DB::commit();
 
+            // Kirim template WA "poin_transaksi" bila member dapat poin ATAU menukar poin
+            // (transaksi redeem-only tetap dikirimi supaya member tahu sisa poinnya)
             $sendPointsWa = $validated['send_points_wa'] ?? true;
-            if ($sendPointsWa && $member && $order->payment_status === 'paid' && $order->points_earned > 0) {
+            $waPointsSent = false;
+            if ($sendPointsWa && $member && $order->payment_status === 'paid'
+                && ($order->points_earned > 0 || $pointsRedeemed > 0)) {
                 $storeName = $order->store->name ?? 'toko kami';
-                MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, (int) $order->points_earned);
+                $waPointsSent = MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, (int) ($order->points_earned ?? 0));
             }
 
             $order->load(['items.menuItem', 'user', 'member']);
-            return response()->json($order, 201);
+            $data = $order->toArray();
+            $data['points_wa_sent'] = $waPointsSent; // feedback ke kasir: template WA terkirim atau tidak
+            return response()->json($data, 201);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => 'Failed to create order', 'error' => $e->getMessage()], 500);
@@ -554,6 +560,7 @@ class OrderController extends Controller
         }
 
         // Earn points for member when pending order is settled
+        $waPointsSent = false;
         if ($wasPending && $order->payment_status === 'paid' && $order->member_id && !$order->points_earned) {
             $member = Member::find($order->member_id);
             if ($member) {
@@ -562,17 +569,21 @@ class OrderController extends Controller
                     $member->addPoints($pointsEarned, $order->id, "Belanja Rp " . number_format($order->total, 0, ',', '.') . " - Order #{$order->daily_number}");
                     $order->points_earned = $pointsEarned;
                     $order->save();
+                }
 
-                    if ($validated['send_points_wa'] ?? true) {
-                        $storeName = $order->store->name ?? 'toko kami';
-                        MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, $pointsEarned);
-                    }
+                // Template WA dikirim bila member dapat poin ATAU pernah menukar poin di pesanan ini
+                if (($validated['send_points_wa'] ?? true)
+                    && ($pointsEarned > 0 || (int) $order->points_redeemed > 0)) {
+                    $storeName = $order->store->name ?? 'toko kami';
+                    $waPointsSent = MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, $pointsEarned);
                 }
             }
         }
 
         $order->load(['items.menuItem', 'user', 'store', 'member']);
-        return response()->json($order);
+        $data = $order->toArray();
+        $data['points_wa_sent'] = $waPointsSent; // feedback ke kasir: template WA terkirim atau tidak
+        return response()->json($data);
     }
 
     /**

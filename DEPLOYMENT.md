@@ -66,7 +66,7 @@ php artisan config:clear
 ```bash
 php artisan whatsapp:test --status 0
 ```
-Perintah ini menampilkan nomor yang terhubung beserta daftar template dan statusnya. Template harus berstatus `APPROVED` agar pesan bisa dikirim tanpa syarat. Template yang dipakai aplikasi: `member_baru` (member baru), `poin_transaksi` (poin setelah bayar), `info_poin` (tombol tes di halaman Member).
+Perintah ini menampilkan nomor yang terhubung beserta daftar template dan statusnya. Template harus berstatus `APPROVED` agar pesan bisa dikirim tanpa syarat. Template yang dipakai aplikasi: `member_baru` (member baru), `poin_transaksi` (poin setelah bayar — juga dikirim saat member menukar poin/bonus), `points_earned` (fallback otomatis bila `poin_transaksi` gagal), `info_poin` (tombol tes di halaman Member). Kasir mendapat notifikasi toast apakah template WA berhasil terkirim setelah pembayaran.
 
 **Tes kirim manual:**
 ```bash
