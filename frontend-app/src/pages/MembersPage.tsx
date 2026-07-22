@@ -8,6 +8,7 @@ import { Search, Star, Phone, UserPlus, Trash2, History, TrendingUp, Repeat, Use
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { memberApi } from '@/lib/memberApi';
+import { pollWaStatus } from '@/lib/pollWaStatus';
 import type { Member, MemberRFM, PointTransaction } from '@/types/member';
 import { formatCurrency } from '@/utils/calculations';
 import { CardGridSkeleton } from '@/components/skeletons';
@@ -129,12 +130,29 @@ export default function MembersPage() {
   const handleSendPointsInfo = async (member: Member) => {
     setSendingWaId(member.id);
     try {
-      const res = await memberApi.sendPointsInfo(member.id);
-      toast.success(res.data.message);
+      await memberApi.sendPointsInfo(member.id);
+      toast.info('Info poin sedang dikirim ke WhatsApp member...');
+
+      pollWaStatus(
+        async () => {
+          const res = await memberApi.waInfoStatus(member.id);
+          return { status: res.data.wa_info_status, method: res.data.wa_info_method };
+        },
+        (result) => {
+          if (result.status === 'sent') {
+            toast.success(
+              result.method === 'text'
+                ? 'Template belum aktif, info poin terkirim sebagai pesan teks'
+                : 'Info poin terkirim via template WhatsApp'
+            );
+          } else if (result.status === 'failed') {
+            toast.warning('Gagal mengirim WhatsApp. Template mungkin belum disetujui dan member belum pernah chat ke nomor bisnis dalam 24 jam terakhir.');
+          }
+        }
+      ).finally(() => setSendingWaId(null));
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       toast.error(msg || 'Gagal mengirim WhatsApp');
-    } finally {
       setSendingWaId(null);
     }
   };

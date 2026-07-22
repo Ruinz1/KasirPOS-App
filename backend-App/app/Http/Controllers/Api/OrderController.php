@@ -8,7 +8,7 @@ use App\Models\OrderItem;
 use App\Models\MenuItem;
 use App\Models\InventoryItem;
 use App\Models\Member;
-use App\Services\MemberPointsMessage;
+use App\Jobs\SendOrderPointsWhatsAppJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -433,18 +433,18 @@ class OrderController extends Controller
             DB::commit();
 
             // Kirim template WA "poin_transaksi" bila member dapat poin ATAU menukar poin
-            // (transaksi redeem-only tetap dikirimi supaya member tahu sisa poinnya)
+            // (transaksi redeem-only tetap dikirimi supaya member tahu sisa poinnya).
+            // Dikirim lewat queue job agar checkout kasir tidak menunggu API WhatsApp;
+            // status pengiriman bisa dipoll lewat GET /orders/{order}/wa-points-status.
             $sendPointsWa = $validated['send_points_wa'] ?? true;
-            $waPointsSent = false;
             if ($sendPointsWa && $member && $order->payment_status === 'paid'
                 && ($order->points_earned > 0 || $pointsRedeemed > 0)) {
-                $storeName = $order->store->name ?? 'toko kami';
-                $waPointsSent = MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, (int) ($order->points_earned ?? 0));
+                $order->update(['wa_points_status' => 'queued']);
+                SendOrderPointsWhatsAppJob::dispatch($order->id);
             }
 
             $order->load(['items.menuItem', 'user', 'member']);
             $data = $order->toArray();
-            $data['points_wa_sent'] = $waPointsSent; // feedback ke kasir: template WA terkirim atau tidak
             return response()->json($data, 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -463,8 +463,24 @@ class OrderController extends Controller
         }
 
         $order->load(['items.menuItem', 'user', 'store']);
-        
+
         return response()->json($order);
+    }
+
+    /**
+     * Status pengiriman WhatsApp poin transaksi (dikirim async via queue job).
+     * Dipoll frontend setelah checkout untuk menampilkan toast begitu job selesai.
+     */
+    public function waPointsStatus(Request $request, Order $order)
+    {
+        if ($request->user()->isKasir() && $order->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        return response()->json([
+            'wa_points_status' => $order->wa_points_status,
+            'wa_points_sent_at' => $order->wa_points_sent_at,
+        ]);
     }
     /**
      * Update order (e.g. for settling pending payment)
@@ -560,7 +576,6 @@ class OrderController extends Controller
         }
 
         // Earn points for member when pending order is settled
-        $waPointsSent = false;
         if ($wasPending && $order->payment_status === 'paid' && $order->member_id && !$order->points_earned) {
             $member = Member::find($order->member_id);
             if ($member) {
@@ -571,18 +586,18 @@ class OrderController extends Controller
                     $order->save();
                 }
 
-                // Template WA dikirim bila member dapat poin ATAU pernah menukar poin di pesanan ini
+                // Template WA dikirim bila member dapat poin ATAU pernah menukar poin di pesanan ini.
+                // Dikirim async lewat queue job; status bisa dipoll lewat GET /orders/{order}/wa-points-status.
                 if (($validated['send_points_wa'] ?? true)
                     && ($pointsEarned > 0 || (int) $order->points_redeemed > 0)) {
-                    $storeName = $order->store->name ?? 'toko kami';
-                    $waPointsSent = MemberPointsMessage::sendTransactionPoints($member, $storeName, (float) $order->total, $pointsEarned);
+                    $order->update(['wa_points_status' => 'queued']);
+                    SendOrderPointsWhatsAppJob::dispatch($order->id);
                 }
             }
         }
 
         $order->load(['items.menuItem', 'user', 'store', 'member']);
         $data = $order->toArray();
-        $data['points_wa_sent'] = $waPointsSent; // feedback ke kasir: template WA terkirim atau tidak
         return response()->json($data);
     }
 

@@ -27,7 +27,12 @@ export const memberApi = {
     api.get<{ data: PointTransaction[] }>(`/members/${id}/transactions`, { params: { page } }),
 
   sendPointsInfo: (id: number) =>
-    api.post<{ message: string; method?: 'template' | 'text' }>(`/members/${id}/send-points-info`),
+    api.post<{ message: string; status: 'queued' }>(`/members/${id}/send-points-info`),
+
+  waInfoStatus: (id: number) =>
+    api.get<{ wa_info_status: 'queued' | 'sent' | 'failed' | null; wa_info_method: 'template' | 'text' | null; wa_info_sent_at: string | null }>(
+      `/members/${id}/wa-info-status`
+    ),
 };
 
 export const rewardApi = {

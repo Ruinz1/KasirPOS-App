@@ -40,6 +40,7 @@ import { formatItemNote, storageUrl } from '@/lib/utils';
 import { MemberSearch } from '@/components/pos/MemberSearch';
 import type { Member, PointReward } from '@/types/member';
 import { queueOfflineOrder, isNetworkError } from '@/lib/offlineOrders';
+import { pollWaStatus } from '@/lib/pollWaStatus';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { WifiOff, RefreshCw } from 'lucide-react';
 
@@ -787,6 +788,22 @@ export default function POSPage() {
   const cartCogs = cart.reduce((sum, item) => sum + ((item.menuItem.cogs || 0) * item.quantity), 0);
   const cartProfit = cartTotal - cartCogs;
 
+  const pollOrderWaPointsStatus = (orderId: number) => {
+    pollWaStatus(
+      async () => {
+        const res = await api.get(`/orders/${orderId}/wa-points-status`);
+        return { status: res.data.wa_points_status as string | null };
+      },
+      (result) => {
+        if (result.status === 'sent') {
+          toast.success('Info poin & reward terkirim ke WhatsApp member');
+        } else if (result.status === 'failed') {
+          toast.warning('Info poin gagal terkirim ke WhatsApp member — cek koneksi/template WA');
+        }
+      }
+    );
+  };
+
   const handleCheckout = async (paymentStatusOrEvent: 'paid' | 'pending' | React.MouseEvent | any = 'paid') => {
     // Handle if called directly from onClick (event object) or with specific status
     const paymentStatus = typeof paymentStatusOrEvent === 'string' ? paymentStatusOrEvent : 'paid';
@@ -1058,13 +1075,11 @@ export default function POSPage() {
         setCurrentOrder(response.data);
         setShowPayment(false);
 
-        // Feedback status kirim template WA info poin ke member (lunas + dapat/menukar poin)
-        if (response.data.member_id && sendPointsWa && paymentStatus === 'paid') {
-          if (response.data.points_wa_sent) {
-            toast.success('Info poin & reward terkirim ke WhatsApp member');
-          } else if (Number(response.data.points_earned || 0) > 0 || Number(response.data.points_redeemed || 0) > 0) {
-            toast.warning('Info poin gagal terkirim ke WhatsApp member — cek koneksi/template WA');
-          }
+        // Notifikasi WA dikirim async di background (queue job) — poll status agar kasir
+        // tetap tahu hasilnya tanpa harus menunggu di dalam request checkout.
+        if (response.data.member_id && sendPointsWa && paymentStatus === 'paid'
+            && (Number(response.data.points_earned || 0) > 0 || Number(response.data.points_redeemed || 0) > 0)) {
+          pollOrderWaPointsStatus(response.data.id);
         }
 
         clearCart();
@@ -1150,13 +1165,10 @@ export default function POSPage() {
         }, 500);
         toast.success('Pembayaran berhasil dikonfirmasi');
 
-        // Feedback status kirim template WA info poin ke member
-        if (response.data.member_id && sendPointsWa) {
-          if (response.data.points_wa_sent) {
-            toast.success('Info poin & reward terkirim ke WhatsApp member');
-          } else if (Number(response.data.points_earned || 0) > 0 || Number(response.data.points_redeemed || 0) > 0) {
-            toast.warning('Info poin gagal terkirim ke WhatsApp member — cek koneksi/template WA');
-          }
+        // Notifikasi WA dikirim async di background (queue job) — poll status.
+        if (response.data.member_id && sendPointsWa
+            && (Number(response.data.points_earned || 0) > 0 || Number(response.data.points_redeemed || 0) > 0)) {
+          pollOrderWaPointsStatus(response.data.id);
         }
       } else {
         // Payment was insufficient, order remains pending

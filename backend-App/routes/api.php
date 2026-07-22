@@ -52,6 +52,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/orders', [OrderController::class, 'index']);
     Route::post('/orders', [OrderController::class, 'store']);
     Route::get('/orders/{order}', [OrderController::class, 'show']);
+    Route::get('/orders/{order}/wa-points-status', [OrderController::class, 'waPointsStatus']);
     Route::put('/orders/{order}', [OrderController::class, 'update']);
     Route::put('/orders/{order}/items', [OrderController::class, 'updateItems']);
     Route::post('/orders/{order}/items', [OrderController::class, 'addItems']);
@@ -131,6 +132,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/members/{member}', [MemberController::class, 'destroy']);
     Route::get('/members/{member}/transactions', [MemberController::class, 'transactions']);
     Route::post('/members/{member}/send-points-info', [MemberController::class, 'sendPointsInfo']);
+    Route::get('/members/{member}/wa-info-status', [MemberController::class, 'waInfoStatus']);
 
     // Point Rewards routes
     Route::get('/point-rewards', [PointRewardController::class, 'index']);

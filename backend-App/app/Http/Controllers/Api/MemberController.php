@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendMemberPointsInfoJob;
 use App\Models\Member;
 use App\Models\Order;
 use App\Services\WhatsAppNotifier;
@@ -165,39 +166,38 @@ class MemberController extends Controller
 
     /**
      * Kirim info poin + daftar reward ke WhatsApp member.
-     * Utama: template "info_poin". Fallback: pesan teks bebas
-     * (hanya berhasil jika member chat duluan <24 jam / template belum disetujui).
+     * Dikirim async lewat queue job agar request tidak menunggu API WhatsApp;
+     * status hasil kirim bisa dipoll lewat GET /members/{member}/wa-info-status.
      */
     public function sendPointsInfo(Request $request, Member $member)
     {
         $this->authorizeStore($request, $member);
 
         $storeName = $request->user()->store->name ?? 'toko kami';
-        $rewardList = \App\Services\MemberPointsMessage::rewardList($member->store_id, (int) $member->total_points);
 
-        $sent = WhatsAppNotifier::sendTemplate($member->phone, 'info_poin', [
-            'customer_name' => $member->name,
-            'nama_toko' => $storeName,
-            'total_poin' => (string) $member->total_points,
-            'daftar_reward' => $rewardList,
+        $member->update([
+            'wa_info_status' => 'queued',
+            'wa_info_method' => null,
         ]);
 
-        if ($sent) {
-            return response()->json(['message' => 'Info poin terkirim via template WhatsApp', 'method' => 'template']);
-        }
+        SendMemberPointsInfoJob::dispatch($member->id, $storeName);
 
-        $text = "Halo {$member->name}! Poin Anda di {$storeName} saat ini: {$member->total_points} poin.\n\n"
-            . "Setiap belanja Rp 10.000 = 1 poin.\n\n"
-            . "Poin bisa ditukar dengan: {$rewardList}.\n\n"
-            . "Tunjukkan pesan ini ke kasir untuk menukar poin Anda. Terima kasih!";
+        return response()->json(['message' => 'Info poin sedang dikirim ke WhatsApp member', 'status' => 'queued']);
+    }
 
-        if (WhatsAppNotifier::sendText($member->phone, $text)) {
-            return response()->json(['message' => 'Template belum aktif, info poin terkirim sebagai pesan teks', 'method' => 'text']);
-        }
+    /**
+     * Status pengiriman WhatsApp info poin (dikirim async via queue job).
+     * Dipoll frontend setelah tombol "Kirim Info Poin" ditekan.
+     */
+    public function waInfoStatus(Request $request, Member $member)
+    {
+        $this->authorizeStore($request, $member);
 
         return response()->json([
-            'message' => 'Gagal mengirim WhatsApp. Template mungkin belum disetujui dan member belum pernah chat ke nomor bisnis dalam 24 jam terakhir.',
-        ], 502);
+            'wa_info_status' => $member->wa_info_status,
+            'wa_info_method' => $member->wa_info_method,
+            'wa_info_sent_at' => $member->wa_info_sent_at,
+        ]);
     }
 
     public function findByPhone(Request $request)

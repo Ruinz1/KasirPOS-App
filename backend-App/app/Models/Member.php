@@ -14,6 +14,9 @@ class Member extends Model
         'phone',
         'total_points',
         'lifetime_points',
+        'wa_info_status',
+        'wa_info_method',
+        'wa_info_sent_at',
     ];
 
     public function store(): BelongsTo

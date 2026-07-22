@@ -41,6 +41,8 @@ class Order extends Model
         'queue_completed_at',
         'store_id',
         'table_id',
+        'wa_points_status',
+        'wa_points_sent_at',
     ];
 
     protected $casts = [
