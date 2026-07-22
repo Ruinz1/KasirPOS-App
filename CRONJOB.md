@@ -8,10 +8,152 @@ yang sebenarnya tidak perlu realtime.
 Berlaku untuk backend Laravel 12 di `backend-App/`, dijalankan di VPS (lihat
 `DEPLOYMENT.md` untuk detail infrastruktur).
 
-> **Status implementasi lokal**: Langkah 0 (aktifkan scheduler), Langkah 2
+> **Status implementasi**: Langkah 0 (aktifkan scheduler), Langkah 2
 > (WhatsApp → Queue Job), dan Langkah 3 (pruning audit log) **sudah
-> diimplementasikan** di kode saat ini. Langkah 4 (pre-agregasi laporan) dan
-> Langkah 5 (backup DB) masih rencana — belum dikerjakan.
+> diimplementasikan** di kode dan sudah di-push ke `origin/master`. Langkah 4
+> (pre-agregasi laporan) dan Langkah 5 (backup DB) masih rencana — belum
+> dikerjakan.
+
+---
+
+## 🚀 Deploy perubahan ini ke VPS
+
+Bagian ini khusus untuk menerapkan perubahan cronjob + queue job WhatsApp
+(commit `feat: cronjob scheduler + queue job WhatsApp...`) ke VPS yang sudah
+berjalan. Ikuti berurutan — beda dengan update biasa di `DEPLOYMENT.md`,
+update ini butuh **migration baru** dan **mengaktifkan crontab + queue
+worker** untuk pertama kalinya.
+
+### 1. Tarik kode terbaru & migrate
+
+```bash
+cd /var/www/kedai-pos          # sesuaikan path repo di VPS Anda
+git pull origin master
+
+cd backend-App
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force     # menambah kolom wa_points_status, wa_info_status, dll
+php artisan config:cache
+php artisan route:cache
+```
+
+Tidak ada perubahan di frontend pada update ini kecuali file TypeScript murni
+(tidak ada perubahan `.env`), tapi karena `POSPage.tsx`/`MembersPage.tsx`
+berubah, **frontend tetap wajib di-build ulang**:
+
+```bash
+cd ../frontend-app
+npm ci
+npm run build
+```
+
+### 2. Pasang crontab Laravel Scheduler (baru pertama kali di server ini)
+
+Scheduler baru diaktifkan di kode — cron OS-nya perlu dipasang manual **sekali
+saja**, ini tidak otomatis ikut ter-pull dari Git:
+
+```bash
+crontab -e
+```
+
+Tambahkan baris berikut di akhir file (ganti path sesuai lokasi repo Anda):
+
+```
+* * * * * cd /var/www/kedai-pos/backend-App && php artisan schedule:run >> /var/log/kedai-pos-schedule.log 2>&1
+```
+
+Simpan, lalu verifikasi crontab tersimpan:
+
+```bash
+crontab -l
+```
+
+Pastikan file log bisa ditulis (biar tidak silent fail):
+
+```bash
+sudo touch /var/log/kedai-pos-schedule.log
+sudo chown $USER:$USER /var/log/kedai-pos-schedule.log
+```
+
+### 3. Pastikan Queue Worker benar-benar jalan (WhatsApp sekarang lewat queue)
+
+Sebelum update ini, worker Supervisor (`kedai-pos-worker`) di server memang
+sudah disebut di `DEPLOYMENT.md`, tapi **tidak pernah memproses job apapun**
+karena tidak ada job yang di-dispatch. Sekarang notifikasi WhatsApp
+(`SendOrderPointsWhatsAppJob`, `SendMemberPointsInfoJob`) dikirim lewat queue
+— **worker wajib jalan**, kalau tidak, notifikasi WA member tidak akan pernah
+terkirim (status macet di `queued` selamanya).
+
+Cek dulu apakah konfigurasi Supervisor untuk worker sudah ada:
+
+```bash
+sudo supervisorctl status
+```
+
+**Jika `kedai-pos-worker` sudah muncul di daftar** — cukup restart:
+```bash
+sudo supervisorctl restart kedai-pos-worker:*
+```
+
+**Jika belum ada sama sekali** (worker belum pernah benar-benar disetup),
+buat konfigurasinya:
+
+```bash
+sudo nano /etc/supervisor/conf.d/kedai-pos-worker.conf
+```
+
+Isi dengan (sesuaikan path & user):
+
+```ini
+[program:kedai-pos-worker]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/kedai-pos/backend-App/artisan queue:work --sleep=3 --tries=2 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/kedai-pos/backend-App/storage/logs/worker.log
+stopwaitsecs=3600
+```
+
+Lalu aktifkan:
+
+```bash
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl start kedai-pos-worker:*
+```
+
+### 4. Verifikasi semua jalan dengan benar
+
+```bash
+# Jadwal terdaftar dengan benar
+cd /var/www/kedai-pos/backend-App
+php artisan schedule:list
+
+# Tunggu 1-2 menit, lalu cek log cron mulai terisi
+tail -f /var/log/kedai-pos-schedule.log
+
+# Worker queue statusnya RUNNING
+sudo supervisorctl status kedai-pos-worker:*
+
+# Tidak ada job WA yang menumpuk gagal
+php artisan queue:failed
+```
+
+**Tes fungsional di aplikasi:**
+1. Buka Kasir → checkout transaksi dengan member yang dapat/tukar poin →
+   pembayaran **langsung selesai tanpa jeda** (sebelumnya menunggu API WA).
+2. Beberapa detik kemudian, toast "Info poin & reward terkirim ke WhatsApp
+   member" (atau toast gagal) muncul otomatis — ini hasil polling ke
+   `GET /orders/{order}/wa-points-status`.
+3. Halaman Member → klik "Kirim Info Poin" → toast "sedang dikirim" muncul
+   dulu, lalu toast hasil akhir menyusul dari `GET /members/{member}/wa-info-status`.
+4. Kalau toast hasil akhir tidak pernah muncul (macet di "sedang dikirim"),
+   berarti worker belum jalan — cek ulang Langkah 3.
 
 ---
 
@@ -94,22 +236,9 @@ php artisan schedule:list
 
 ### Langkah 1 — Pasang cron di VPS (sekali saja)
 
-```bash
-crontab -e
-```
-
-Tambahkan baris:
-
-```
-* * * * * cd /var/www/kedai-pos/backend-App && php artisan schedule:run >> /var/log/kedai-pos-schedule.log 2>&1
-```
-
-Sesuaikan path `/var/www/kedai-pos` dengan path repo di VPS (lihat
-`DEPLOYMENT.md` bagian "Alur deploy"). Verifikasi jadwal terbaca:
-
-```bash
-php artisan schedule:list
-```
+Lihat tutorial lengkapnya di bagian [🚀 Deploy perubahan ini ke VPS](#-deploy-perubahan-ini-ke-vps)
+di atas — mencakup pasang crontab, migration, dan mengaktifkan queue worker
+sekaligus.
 
 ### Langkah 2 — Pindahkan notifikasi WhatsApp ke Queue ✅ Sudah diimplementasikan
 
