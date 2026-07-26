@@ -26,6 +26,7 @@ const OrderHistoryPage = lazy(() => import("./pages/OrderHistoryPage"));
 const DailyShoppingPage = lazy(() => import("./pages/DailyShoppingPage"));
 const LeavePage = lazy(() => import("./pages/LeavePage"));
 const TablesPage = lazy(() => import("./pages/TablesPage"));
+const ParkingPage = lazy(() => import("./pages/ParkingPage"));
 const CashierShiftPage = lazy(() => import("./pages/CashierShiftPage"));
 const MembersPage = lazy(() => import("./pages/MembersPage"));
 const PointRewardsPage = lazy(() => import("./pages/PointRewardsPage"));
@@ -89,6 +90,7 @@ const App = () => (
               <Route path="/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
               <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
               <Route path="/tables" element={<ProtectedRoute><TablesPage /></ProtectedRoute>} />
+              <Route path="/parking" element={<ProtectedRoute><ParkingPage /></ProtectedRoute>} />
               <Route path="/queue" element={<ProtectedRoute><QueuePage /></ProtectedRoute>} />
               <Route path="/queue/food" element={<ProtectedRoute><FoodQueuePage /></ProtectedRoute>} />
               <Route path="/queue/drink" element={<ProtectedRoute><DrinkQueuePage /></ProtectedRoute>} />

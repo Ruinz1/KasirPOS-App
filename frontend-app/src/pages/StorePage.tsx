@@ -7,13 +7,24 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { Store as StoreIcon, MapPin, Users, Save } from 'lucide-react';
+import { Store as StoreIcon, MapPin, Users, Save, Navigation, Crosshair, Truck, Info, Car, ClipboardList } from 'lucide-react';
+import { formatCurrency } from '@/utils/calculations';
 
 interface StoreData {
     id: number;
     name: string;
     location: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    delivery_base_fee?: number;
+    delivery_fee_per_km?: number;
+    delivery_max_km?: number | null;
+    parking_fee_motor?: number;
+    parking_fee_mobil?: number;
+    queue_enabled?: boolean;
+    parking_checkout_enabled?: boolean;
     users_count?: number;
     owner?: { id: number; name: string; email: string };
 }
@@ -28,9 +39,22 @@ export default function StorePage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
 
-    const [formData, setFormData] = useState({ name: '', location: '' });
+    const [formData, setFormData] = useState({
+        name: '',
+        location: '',
+        latitude: '',
+        longitude: '',
+        delivery_base_fee: '0',
+        delivery_fee_per_km: '2000',
+        delivery_max_km: '',
+        parking_fee_motor: '2000',
+        parking_fee_mobil: '3000',
+    });
+    const [queueEnabled, setQueueEnabled] = useState(true);
+    const [parkingCheckoutEnabled, setParkingCheckoutEnabled] = useState(true);
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [gettingLocation, setGettingLocation] = useState(false);
 
     // Access Control
     useEffect(() => {
@@ -58,7 +82,19 @@ export default function StorePage() {
     // Sync form data when store data is loaded
     useEffect(() => {
         if (store) {
-            setFormData({ name: store.name, location: store.location || '' });
+            setFormData({
+                name: store.name,
+                location: store.location || '',
+                latitude: store.latitude != null ? String(store.latitude) : '',
+                longitude: store.longitude != null ? String(store.longitude) : '',
+                delivery_base_fee: String(store.delivery_base_fee ?? 0),
+                delivery_fee_per_km: String(store.delivery_fee_per_km ?? 2000),
+                delivery_max_km: store.delivery_max_km != null ? String(store.delivery_max_km) : '',
+                parking_fee_motor: String(store.parking_fee_motor ?? 2000),
+                parking_fee_mobil: String(store.parking_fee_mobil ?? 3000),
+            });
+            setQueueEnabled(store.queue_enabled ?? true);
+            setParkingCheckoutEnabled(store.parking_checkout_enabled ?? true);
             if (store.image) {
                 setPreviewUrl(storageUrl(store.image));
             }
@@ -71,6 +107,31 @@ export default function StorePage() {
             setImageFile(file);
             setPreviewUrl(URL.createObjectURL(file));
         }
+    };
+
+    // Gunakan lokasi browser sebagai koordinat toko
+    const handleUseMyLocation = () => {
+        if (!navigator.geolocation) {
+            toast({ title: 'Browser tidak mendukung geolocation', variant: 'destructive' });
+            return;
+        }
+        setGettingLocation(true);
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setFormData(prev => ({
+                    ...prev,
+                    latitude: String(pos.coords.latitude),
+                    longitude: String(pos.coords.longitude),
+                }));
+                setGettingLocation(false);
+                toast({ title: 'Lokasi berhasil didapat', description: `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}` });
+            },
+            (err) => {
+                setGettingLocation(false);
+                toast({ title: 'Gagal mendapat lokasi', description: err.message, variant: 'destructive' });
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
     };
 
     // Mutations for Create/Update
@@ -120,6 +181,15 @@ export default function StorePage() {
         const data = new FormData();
         data.append('name', formData.name);
         data.append('location', formData.location);
+        if (formData.latitude) data.append('latitude', formData.latitude);
+        if (formData.longitude) data.append('longitude', formData.longitude);
+        data.append('delivery_base_fee', formData.delivery_base_fee || '0');
+        data.append('delivery_fee_per_km', formData.delivery_fee_per_km || '2000');
+        if (formData.delivery_max_km) data.append('delivery_max_km', formData.delivery_max_km);
+        data.append('parking_fee_motor', formData.parking_fee_motor || '2000');
+        data.append('parking_fee_mobil', formData.parking_fee_mobil || '3000');
+        data.append('queue_enabled', queueEnabled ? '1' : '0');
+        data.append('parking_checkout_enabled', parkingCheckoutEnabled ? '1' : '0');
         if (imageFile) {
             data.append('image', imageFile);
         }
@@ -128,6 +198,19 @@ export default function StorePage() {
     };
 
     if (loading) return <div className="p-8">Loading...</div>;
+
+    // OpenStreetMap embed for store location preview
+    const storeLat = parseFloat(formData.latitude);
+    const storeLng = parseFloat(formData.longitude);
+    const storeMapUrl = (!isNaN(storeLat) && !isNaN(storeLng))
+        ? `https://www.openstreetmap.org/export/embed.html?bbox=${storeLng - 0.01},${storeLat - 0.01},${storeLng + 0.01},${storeLat + 0.01}&layer=mapnik&marker=${storeLat},${storeLng}`
+        : null;
+
+    const exampleFee = (() => {
+        const base = parseInt(formData.delivery_base_fee) || 0;
+        const perKm = parseInt(formData.delivery_fee_per_km) || 2000;
+        return base + 3 * perKm; // contoh 3 km
+    })();
 
     const content = (
         <div className="p-8 max-w-4xl mx-auto space-y-8 animate-fade-in pb-24">
@@ -139,6 +222,7 @@ export default function StorePage() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
+                {/* ── Informasi Toko ── */}
                 <Card className="card-elevated md:col-span-2">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
@@ -150,7 +234,8 @@ export default function StorePage() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <form onSubmit={handleSubmit} className="space-y-4">
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                            {/* Logo Upload */}
                             <div className="space-y-4">
                                 <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-lg border-muted-foreground/25 hover:border-primary/50 transition-colors">
                                     <div className="relative group cursor-pointer">
@@ -176,28 +261,31 @@ export default function StorePage() {
                                 </div>
                             </div>
 
-                            <div className="space-y-2">
-                                <Label>Owner Toko</Label>
-                                <Input
-                                    value={store?.owner?.name || user?.name || '-'}
-                                    disabled
-                                    className="input-coffee bg-secondary/50 font-medium text-foreground"
-                                />
-                                <p className="text-xs text-muted-foreground">Owner tidak dapat diubah</p>
+                            {/* Owner & Nama Toko */}
+                            <div className="grid md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Owner Toko</Label>
+                                    <Input
+                                        value={store?.owner?.name || user?.name || '-'}
+                                        disabled
+                                        className="input-coffee bg-secondary/50 font-medium text-foreground"
+                                    />
+                                    <p className="text-xs text-muted-foreground">Owner tidak dapat diubah</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="name">Nama Toko</Label>
+                                    <Input
+                                        id="name"
+                                        placeholder="Contoh: Kopi Nusantara - Cabang Pusat"
+                                        value={formData.name}
+                                        onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                        required
+                                        className="input-coffee"
+                                    />
+                                </div>
                             </div>
 
-                            <div className="space-y-2">
-                                <Label htmlFor="name">Nama Toko</Label>
-                                <Input
-                                    id="name"
-                                    placeholder="Contoh: Kopi Nusantara - Cabang Pusat"
-                                    value={formData.name}
-                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
-                                    required
-                                    className="input-coffee"
-                                />
-                            </div>
-
+                            {/* Lokasi / Alamat */}
                             <div className="space-y-2">
                                 <Label htmlFor="location">Lokasi / Alamat</Label>
                                 <div className="relative">
@@ -212,8 +300,197 @@ export default function StorePage() {
                                 </div>
                             </div>
 
-                            <div className="pt-4 flex justify-end">
-                                <Button type="submit" className="btn-primary">
+                            {/* ── Koordinat GPS Toko ── */}
+                            <div className="space-y-3 rounded-xl border border-border bg-secondary/20 p-4">
+                                <div className="flex items-center gap-2">
+                                    <Crosshair className="w-4 h-4 text-primary" />
+                                    <div>
+                                        <p className="font-semibold text-sm">Koordinat GPS Toko</p>
+                                        <p className="text-xs text-muted-foreground">Diperlukan untuk kalkulasi ongkir delivery otomatis</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Latitude</Label>
+                                        <Input
+                                            placeholder="-5.123456"
+                                            value={formData.latitude}
+                                            onChange={e => setFormData({ ...formData, latitude: e.target.value })}
+                                            className="text-xs font-mono"
+                                            type="number"
+                                            step="0.000001"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Longitude</Label>
+                                        <Input
+                                            placeholder="119.456789"
+                                            value={formData.longitude}
+                                            onChange={e => setFormData({ ...formData, longitude: e.target.value })}
+                                            className="text-xs font-mono"
+                                            type="number"
+                                            step="0.000001"
+                                        />
+                                    </div>
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleUseMyLocation}
+                                    disabled={gettingLocation}
+                                    className="w-full"
+                                >
+                                    <Navigation className={`w-4 h-4 mr-2 ${gettingLocation ? 'animate-pulse' : ''}`} />
+                                    {gettingLocation ? 'Mencari Lokasi...' : 'Gunakan Lokasi Saya (GPS Browser)'}
+                                </Button>
+                                {/* Map Preview */}
+                                {storeMapUrl && (
+                                    <div className="rounded-lg overflow-hidden border border-border h-48">
+                                        <iframe
+                                            src={storeMapUrl}
+                                            width="100%"
+                                            height="100%"
+                                            style={{ border: 0 }}
+                                            loading="lazy"
+                                            title="Lokasi Toko"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* ── Konfigurasi Ongkir ── */}
+                            <div className="space-y-3 rounded-xl border border-border bg-secondary/20 p-4">
+                                <div className="flex items-center gap-2">
+                                    <Truck className="w-4 h-4 text-primary" />
+                                    <div>
+                                        <p className="font-semibold text-sm">Tarif Ongkos Kirim</p>
+                                        <p className="text-xs text-muted-foreground">Ongkir = Biaya dasar + (Jarak km × Tarif per km)</p>
+                                    </div>
+                                </div>
+                                <div className="grid md:grid-cols-3 gap-3">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Biaya Dasar (flat)</Label>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-xs text-muted-foreground shrink-0">Rp</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                placeholder="0"
+                                                value={formData.delivery_base_fee}
+                                                onChange={e => setFormData({ ...formData, delivery_base_fee: e.target.value })}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">Biaya tetap per pesanan</p>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Tarif per Kilometer</Label>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-xs text-muted-foreground shrink-0">Rp</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                placeholder="2000"
+                                                value={formData.delivery_fee_per_km}
+                                                onChange={e => setFormData({ ...formData, delivery_fee_per_km: e.target.value })}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">Per km dari toko</p>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Jarak Maks. (km)</Label>
+                                        <Input
+                                            type="number"
+                                            min="1"
+                                            placeholder="Kosong = tak terbatas"
+                                            value={formData.delivery_max_km}
+                                            onChange={e => setFormData({ ...formData, delivery_max_km: e.target.value })}
+                                            className="text-sm"
+                                        />
+                                        <p className="text-xs text-muted-foreground">Kosongkan = tidak ada batas</p>
+                                    </div>
+                                </div>
+                                {/* Contoh kalkulasi */}
+                                <div className="flex items-start gap-2 rounded-lg bg-primary/10 border border-primary/20 p-3 text-xs">
+                                    <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                                    <span className="text-primary/80">
+                                        Contoh: Jarak 3 km → Ongkir = <strong>{formatCurrency(exampleFee)}</strong>
+                                        {' '}(Rp {formData.delivery_base_fee || 0} + 3 km × Rp {formData.delivery_fee_per_km || 2000})
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* ── Konfigurasi Tarif Parkir ── */}
+                            <div className="space-y-3 rounded-xl border border-border bg-secondary/20 p-4">
+                                <div className="flex items-center gap-2">
+                                    <Car className="w-4 h-4 text-primary" />
+                                    <div>
+                                        <p className="font-semibold text-sm">Tarif Karcis Parkir</p>
+                                        <p className="text-xs text-muted-foreground">Tarif flat per kendaraan, dicetak langsung di karcis saat masuk</p>
+                                    </div>
+                                </div>
+                                <div className="grid md:grid-cols-2 gap-3">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Tarif Motor</Label>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-xs text-muted-foreground shrink-0">Rp</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                placeholder="2000"
+                                                value={formData.parking_fee_motor}
+                                                onChange={e => setFormData({ ...formData, parking_fee_motor: e.target.value })}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">Tarif Mobil</Label>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-xs text-muted-foreground shrink-0">Rp</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                placeholder="3000"
+                                                value={formData.parking_fee_mobil}
+                                                onChange={e => setFormData({ ...formData, parking_fee_mobil: e.target.value })}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                                {/* Toggle proses jam keluar */}
+                                <div className="flex items-center justify-between gap-4 rounded-lg bg-background/60 border border-border p-3">
+                                    <div>
+                                        <p className="text-sm font-medium">Proses Jam Keluar</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {parkingCheckoutEnabled
+                                                ? 'Karcis dicatat jam masuk & jam keluar. Kendaraan harus di-checkout manual.'
+                                                : 'Karcis hanya mencatat jam masuk, langsung selesai saat dicetak. Tidak perlu checkout.'}
+                                        </p>
+                                    </div>
+                                    <Switch checked={parkingCheckoutEnabled} onCheckedChange={setParkingCheckoutEnabled} />
+                                </div>
+                            </div>
+
+                            {/* ── Fitur Antrian ── */}
+                            <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-secondary/20 p-4">
+                                <div className="flex items-center gap-2">
+                                    <ClipboardList className="w-4 h-4 text-primary" />
+                                    <div>
+                                        <p className="font-semibold text-sm">Fitur Antrian</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Nyalakan untuk menampilkan menu Antrian, Antrian Makanan & Antrian Minuman di sidebar
+                                        </p>
+                                    </div>
+                                </div>
+                                <Switch checked={queueEnabled} onCheckedChange={setQueueEnabled} />
+                            </div>
+
+                            <div className="pt-2 flex justify-end">
+                                <Button type="submit" className="btn-primary" disabled={mutation.isPending}>
                                     <Save className="w-4 h-4 mr-2" />
                                     {store ? 'Simpan Perubahan' : 'Buat Toko'}
                                 </Button>
@@ -253,4 +530,3 @@ export default function StorePage() {
         </div>
     );
 }
-

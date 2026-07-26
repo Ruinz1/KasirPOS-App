@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\TableController;
+use App\Http\Controllers\Api\ParkingTicketController;
 use App\Http\Controllers\QueueController;
 use App\Http\Controllers\OrderHistoryController;
 use App\Http\Controllers\DailyShoppingController;
@@ -71,6 +72,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/tables/{table}/assign', [TableController::class, 'assignOrder']);
     Route::post('/tables/{table}/release', [TableController::class, 'releaseTable']);
     Route::post('/tables/{table}/mark-served', [TableController::class, 'markServed']);
+
+    // Parking ticket routes
+    Route::get('/parking-tickets/statistics', [ParkingTicketController::class, 'statistics']);
+    Route::get('/parking-tickets', [ParkingTicketController::class, 'index']);
+    Route::post('/parking-tickets', [ParkingTicketController::class, 'store']);
+    Route::post('/parking-tickets/{parkingTicket}/checkout', [ParkingTicketController::class, 'checkout']);
 
     // Queue routes
     Route::get('/queue', [QueueController::class, 'index']);
@@ -156,6 +163,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/store', [StoreController::class, 'show']);
     Route::post('/store', [StoreController::class, 'store']);
     Route::put('/store', [StoreController::class, 'update']);
+
+    // Delivery routes
+    Route::post('/delivery/calculate', [StoreController::class, 'calculateDeliveryFee']);
+
 
     // Roles & Permissions routes (Admin Only)
     Route::middleware(['role:admin'])->group(function () {

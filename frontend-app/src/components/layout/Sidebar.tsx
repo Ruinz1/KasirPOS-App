@@ -31,7 +31,8 @@ import {
   Star,
   Gift,
   ScrollText,
-  Menu as MenuIcon
+  Menu as MenuIcon,
+  ParkingCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -43,6 +44,7 @@ const allMenuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/', permission: 'view_dashboard' },
   { icon: ShoppingCart, label: 'Kasir', path: '/pos', permission: 'manage_orders' },
   { icon: Table, label: 'Meja', path: '/tables', permission: 'manage_orders' },
+  { icon: ParkingCircle, label: 'Parkir', path: '/parking', permission: 'manage_orders' },
   { icon: ClipboardList, label: 'Antrian', path: '/queue', permission: 'manage_orders' },
   { icon: ChefHat, label: 'Antrian Makanan', path: '/queue/food', permission: 'manage_orders' },
   { icon: GlassWater, label: 'Antrian Minuman', path: '/queue/drink', permission: 'manage_orders' },
@@ -81,6 +83,9 @@ function useStoreInfo() {
 
 function useVisibleMenuItems() {
   const { user, hasPermission } = useAuth();
+  const storeData = useStoreInfo();
+  const queueEnabled = storeData?.queue_enabled ?? true;
+
   return allMenuItems.filter(item => {
     if (!user) return false;
 
@@ -99,6 +104,10 @@ function useVisibleMenuItems() {
     // Member & Reward Poin visible to admin, owner, and karyawan with manage_orders
     if (item.path === '/members' || item.path === '/point-rewards') {
       return user.role === 'admin' || hasPermission('manage_orders');
+    }
+    // Fitur Antrian bisa dimatikan per toko di halaman Profil Toko
+    if (item.path.startsWith('/queue')) {
+      return queueEnabled && hasPermission(item.permission);
     }
 
     return hasPermission(item.permission);
