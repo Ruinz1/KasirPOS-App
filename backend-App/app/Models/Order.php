@@ -43,10 +43,19 @@ class Order extends Model
         'table_id',
         'wa_points_status',
         'wa_points_sent_at',
+        'delivery_fee',
+        'customer_latitude',
+        'customer_longitude',
+        'delivery_distance_km',
+        'customer_address',
     ];
 
     protected $casts = [
         'payment_proof' => 'array',
+        'delivery_fee' => 'integer',
+        'customer_latitude' => 'float',
+        'customer_longitude' => 'float',
+        'delivery_distance_km' => 'float',
     ];
 
     /**

@@ -42,7 +42,8 @@ import type { Member, PointReward } from '@/types/member';
 import { queueOfflineOrder, isNetworkError } from '@/lib/offlineOrders';
 import { pollWaStatus } from '@/lib/pollWaStatus';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
-import { WifiOff, RefreshCw } from 'lucide-react';
+import { WifiOff, RefreshCw, Truck } from 'lucide-react';
+import { DeliveryLocationPicker } from '@/components/pos/DeliveryLocationPicker';
 
 
 
@@ -186,6 +187,15 @@ export default function POSPage() {
   const [splitPayment1Amount, setSplitPayment1Amount] = useState<string>('');
   const [splitPayment2Method, setSplitPayment2Method] = useState<'cash' | 'card' | 'qris'>('qris');
   const [splitPayment2Amount, setSplitPayment2Amount] = useState<string>('');
+
+  // Delivery state
+  const [deliveryInfo, setDeliveryInfo] = useState<{
+    customer_lat: number;
+    customer_lng: number;
+    customer_address: string;
+    distance_km: number;
+    delivery_fee: number;
+  } | null>(null);
 
   const generateKitchenCode = (name: string) => {
     // Split main part and variant part
@@ -768,6 +778,7 @@ export default function POSPage() {
     setSelectedReward(null);
     setOrderType('dine_in');
     setPaidAmount('');
+    setDeliveryInfo(null);
   };
 
   // Helper function to get discounted price
@@ -779,12 +790,13 @@ export default function POSPage() {
     return price;
   };
 
-  const cartTotal = cart.reduce((sum, item) => {
+  const cartItemsTotal = cart.reduce((sum, item) => {
     if (item.is_bonus) return sum; // bonus tukar poin = gratis, tidak menambah tagihan
     const basePrice = getDiscountedPrice(item.menuItem);
     const variantPrice = Number(item.variant_price || 0);
     return sum + ((basePrice + variantPrice) * item.quantity);
   }, 0);
+  const cartTotal = cartItemsTotal + (orderType === 'delivery' && deliveryInfo ? deliveryInfo.delivery_fee : 0);
   const cartCogs = cart.reduce((sum, item) => sum + ((item.menuItem.cogs || 0) * item.quantity), 0);
   const cartProfit = cartTotal - cartCogs;
 
@@ -1051,6 +1063,14 @@ export default function POSPage() {
           paid_amount: paymentStatus === 'paid' ? (paidAmount ? parseFloat(paidAmount) : null) : null,
           send_points_wa: sendPointsWa,
           items: formatOrderItemsPayload(cart),
+          // Delivery data
+          ...(orderType === 'delivery' && deliveryInfo ? {
+            delivery_fee: deliveryInfo.delivery_fee,
+            customer_latitude: deliveryInfo.customer_lat,
+            customer_longitude: deliveryInfo.customer_lng,
+            delivery_distance_km: deliveryInfo.distance_km,
+            customer_address: deliveryInfo.customer_address || null,
+          } : {}),
         };
 
         if (isAdmin()) {
@@ -2194,7 +2214,7 @@ export default function POSPage() {
                       ? 'bg-white dark:bg-gray-800 text-primary shadow-sm border border-border/50' 
                       : 'text-muted-foreground hover:bg-secondary'
                   }`}
-                  onClick={() => setOrderType('dine_in')}
+                  onClick={() => { setOrderType('dine_in'); setDeliveryInfo(null); }}
                 >
                   <Coffee className="w-3.5 h-3.5" />
                   Dine In
@@ -2205,10 +2225,21 @@ export default function POSPage() {
                       ? 'bg-white dark:bg-gray-800 text-primary shadow-sm border border-border/50' 
                       : 'text-muted-foreground hover:bg-secondary'
                   }`}
-                  onClick={() => setOrderType('takeaway')}
+                  onClick={() => { setOrderType('takeaway'); setDeliveryInfo(null); }}
                 >
                   <ShoppingBag className="w-3.5 h-3.5" />
                   Takeaway
+                </button>
+                <button
+                  className={`px-3 flex items-center gap-1.5 py-1.5 text-xs font-bold rounded-md transition-all ${
+                    orderType === 'delivery' 
+                      ? 'bg-white dark:bg-gray-800 text-blue-500 shadow-sm border border-border/50' 
+                      : 'text-muted-foreground hover:bg-secondary'
+                  }`}
+                  onClick={() => setOrderType('delivery')}
+                >
+                  <Truck className="w-3.5 h-3.5" />
+                  Delivery
                 </button>
               </div>
 
@@ -2250,6 +2281,14 @@ export default function POSPage() {
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
                 disabled={isAdmin() && !selectedStoreId}
+              />
+            )}
+            {/* Delivery Location Picker */}
+            {orderType === 'delivery' && (
+              <DeliveryLocationPicker
+                onConfirm={setDeliveryInfo}
+                onClear={() => setDeliveryInfo(null)}
+                currentInfo={deliveryInfo}
               />
             )}
           </div>
@@ -2535,8 +2574,18 @@ export default function POSPage() {
                   <span className="text-success">{formatCurrency(cartProfit)}</span>
                 </div>
               </div>
-              <div className="flex justify-between items-center mb-3 md:mb-4 pt-2 md:pt-3 border-t border-border">
-                <span className="font-semibold text-sm md:text-base">Total</span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-medium">Subtotal</span>
+                <span className="font-semibold">{formatCurrency(cartItemsTotal)}</span>
+              </div>
+              {orderType === 'delivery' && deliveryInfo && (
+                <div className="flex items-center justify-between mb-1 text-blue-400">
+                  <span className="text-sm flex items-center gap-1"><Truck className="w-3.5 h-3.5" /> Ongkir ({deliveryInfo.distance_km} km)</span>
+                  <span className="font-semibold">{formatCurrency(deliveryInfo.delivery_fee)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
+                <span className="font-bold text-sm">Total</span>
                 <span className="text-xl md:text-2xl font-bold">{formatCurrency(cartTotal)}</span>
               </div>
               {selectedMember && !editingOrderId && !addToOrderId && (
@@ -2587,15 +2636,14 @@ export default function POSPage() {
             <div className="py-4">
               <p className="text-center text-3xl font-bold mb-6">{formatCurrency(cartTotal)}</p>
 
-              {/* Order Type */}
               <p className="text-sm text-muted-foreground mb-3">Tipe Pesanan</p>
-              <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="grid grid-cols-3 gap-3 mb-6">
                 <button
                   className={`p-4 rounded-xl border-2 transition-all ${orderType === 'dine_in'
                     ? 'border-primary bg-primary/5'
                     : 'border-border hover:border-primary/50'
                     }`}
-                  onClick={() => setOrderType('dine_in')}
+                  onClick={() => { setOrderType('dine_in'); setDeliveryInfo(null); }}
                 >
                   <Coffee className="w-6 h-6 mx-auto mb-2 text-primary" />
                   <span className="text-sm font-medium">Dine In</span>
@@ -2605,10 +2653,20 @@ export default function POSPage() {
                     ? 'border-primary bg-primary/5'
                     : 'border-border hover:border-primary/50'
                     }`}
-                  onClick={() => setOrderType('takeaway')}
+                  onClick={() => { setOrderType('takeaway'); setDeliveryInfo(null); }}
                 >
                   <ShoppingBag className="w-6 h-6 mx-auto mb-2 text-primary" />
                   <span className="text-sm font-medium">Takeaway</span>
+                </button>
+                <button
+                  className={`p-4 rounded-xl border-2 transition-all ${orderType === 'delivery'
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'border-border hover:border-blue-400/50'
+                    }`}
+                  onClick={() => setOrderType('delivery')}
+                >
+                  <Truck className="w-6 h-6 mx-auto mb-2 text-blue-500" />
+                  <span className="text-sm font-medium">Delivery</span>
                 </button>
               </div>
 
@@ -2869,7 +2927,10 @@ export default function POSPage() {
                         </div>
                         <div className="flex justify-between">
                           <span>Kasir: {user?.name?.split(' ')[0]}</span>
-                          <span className="capitalize">{(currentOrder as any).order_type === 'dine_in' ? 'Dine In' : 'Takeaway'}</span>
+                          <span className="capitalize">
+                            {(currentOrder as any).order_type === 'dine_in' ? 'Dine In' : 
+                             (currentOrder as any).order_type === 'delivery' ? '🚗 Delivery' : 'Takeaway'}
+                          </span>
                         </div>
                         {currentOrder.customer_name && (
                           <div className="mt-0.5 line-clamp-1">Plg: {currentOrder.customer_name}</div>
@@ -2900,6 +2961,25 @@ export default function POSPage() {
 
                       {/* Totals */}
                       <div className="mb-2 text-[10px] space-y-0.5">
+                        {/* Ongkir untuk delivery */}
+                        {(currentOrder as any).order_type === 'delivery' && (currentOrder as any).delivery_fee > 0 && (
+                          <>
+                            {(currentOrder as any).customer_address && (
+                              <div className="text-[9px] italic mb-1">📍 {(currentOrder as any).customer_address}</div>
+                            )}
+                            {(currentOrder as any).delivery_distance_km && (
+                              <div className="flex justify-between">
+                                <span>Jarak</span>
+                                <span>{(currentOrder as any).delivery_distance_km} km</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span>Ongkir</span>
+                              <span>{formatCurrency((currentOrder as any).delivery_fee)}</span>
+                            </div>
+                            <div className="border-t border-dashed border-black/30 my-0.5" />
+                          </>
+                        )}
                         <div className="flex justify-between font-bold text-xs">
                           <span>TOTAL</span>
                           <span>{formatCurrency(currentOrder.total)}</span>
@@ -3065,7 +3145,10 @@ export default function POSPage() {
               </div>
               <div className="flex justify-between">
                 <span>Kasir: {user?.name?.split(' ')[0]}</span>
-                <span className="capitalize">{(currentOrder as any).order_type === 'dine_in' ? 'Dine In' : 'Takeaway'}</span>
+                <span className="capitalize">
+                  {(currentOrder as any).order_type === 'dine_in' ? 'Dine In' :
+                   (currentOrder as any).order_type === 'delivery' ? 'Delivery' : 'Takeaway'}
+                </span>
               </div>
               {currentOrder.customer_name && (
                 <div className="mt-0.5 line-clamp-1">Plg: {currentOrder.customer_name}</div>
@@ -3098,6 +3181,24 @@ export default function POSPage() {
 
             {/* Totals */}
             <div className="mb-2 text-[10px] space-y-0.5">
+              {(currentOrder as any).order_type === 'delivery' && (currentOrder as any).delivery_fee > 0 && (
+                <>
+                  {(currentOrder as any).customer_address && (
+                    <div className="text-[9px] italic mb-1">Alamat: {(currentOrder as any).customer_address}</div>
+                  )}
+                  {(currentOrder as any).delivery_distance_km && (
+                    <div className="flex justify-between">
+                      <span>Jarak</span>
+                      <span>{(currentOrder as any).delivery_distance_km} km</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Ongkir</span>
+                    <span>{formatCurrency((currentOrder as any).delivery_fee)}</span>
+                  </div>
+                  <div className="border-t border-dashed border-black/30 my-0.5" />
+                </>
+              )}
               {Number((currentOrder as any).points_redeemed) > 0 && (
                 <div className="flex justify-between">
                   <span>Tukar Poin (Bonus)</span>

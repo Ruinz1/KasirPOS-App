@@ -249,7 +249,7 @@ class OrderController extends Controller
             'send_points_wa' => 'nullable|boolean',
             'payment_method' => 'nullable|in:cash,card,qris',
             'payment_status' => 'nullable|in:paid,pending',
-            'order_type' => 'required|in:dine_in,takeaway',
+            'order_type' => 'required|in:dine_in,takeaway,delivery',
             'paid_amount' => 'nullable|numeric|min:0',
             'initial_cash' => 'nullable|numeric|min:0',
             'items' => 'required|array|min:1',
@@ -264,6 +264,12 @@ class OrderController extends Controller
             'items.*.removed_ingredient_ids' => 'nullable|array',
             'items.*.removed_ingredient_ids.*' => 'integer',
             'store_id' => 'nullable|exists:stores,id',
+            // Delivery fields
+            'delivery_fee' => 'nullable|integer|min:0',
+            'customer_latitude' => 'nullable|numeric|between:-90,90',
+            'customer_longitude' => 'nullable|numeric|between:-180,180',
+            'delivery_distance_km' => 'nullable|numeric|min:0',
+            'customer_address' => 'nullable|string|max:500',
         ]);
         
         $storeId = null;
@@ -319,6 +325,12 @@ class OrderController extends Controller
                 'cogs' => 0,
                 'profit' => 0,
                 'store_id' => $storeId,
+                // Delivery fields
+                'delivery_fee' => $validated['delivery_fee'] ?? null,
+                'customer_latitude' => $validated['customer_latitude'] ?? null,
+                'customer_longitude' => $validated['customer_longitude'] ?? null,
+                'delivery_distance_km' => $validated['delivery_distance_km'] ?? null,
+                'customer_address' => $validated['customer_address'] ?? null,
             ]);
 
             $total = 0;
@@ -382,10 +394,11 @@ class OrderController extends Controller
                 $cogs += $itemCogs;
             }
 
-            // Update order totals
-            $order->total = $total;
+            // Update order totals (termasuk ongkir untuk delivery)
+            $deliveryFee = isset($validated['delivery_fee']) ? (int)$validated['delivery_fee'] : 0;
+            $order->total = $total + $deliveryFee;
             $order->cogs = $cogs;
-            $order->profit = $total - $cogs;
+            $order->profit = ($total + $deliveryFee) - $cogs;
             
             // Set paid_amount and change_amount based on payment method
             if ($order->payment_method === 'qris' || $order->payment_method === 'card') {

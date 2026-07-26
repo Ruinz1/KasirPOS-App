@@ -2668,7 +2668,10 @@ export default function ReportsPage() {
                         </div>
                         <div className="flex justify-between">
                           <span>Kasir: {selectedOrder.user?.name?.split(' ')[0]}</span>
-                          <span className="capitalize">{(selectedOrder as any).order_type === 'dine_in' ? 'Dine In' : 'Takeaway'}</span>
+                          <span className="capitalize">
+                            {(selectedOrder as any).order_type === 'dine_in' ? 'Dine In' :
+                             (selectedOrder as any).order_type === 'delivery' ? 'Delivery' : 'Takeaway'}
+                          </span>
                         </div>
                         {selectedOrder.customer_name && (
                           <div className="mt-0.5 line-clamp-1">Plg: {selectedOrder.customer_name}</div>
@@ -2702,6 +2705,24 @@ export default function ReportsPage() {
 
                       {/* Totals */}
                       <div className="mb-2 text-[10px] space-y-0.5">
+                        {(selectedOrder as any).order_type === 'delivery' && (selectedOrder as any).delivery_fee > 0 && (
+                          <>
+                            {(selectedOrder as any).customer_address && (
+                              <div className="text-[9px] italic mb-1">Alamat: {(selectedOrder as any).customer_address}</div>
+                            )}
+                            {(selectedOrder as any).delivery_distance_km && (
+                              <div className="flex justify-between">
+                                <span>Jarak</span>
+                                <span>{(selectedOrder as any).delivery_distance_km} km</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span>Ongkir</span>
+                              <span>{formatCurrency((selectedOrder as any).delivery_fee)}</span>
+                            </div>
+                            <div className="border-t border-dashed border-black/30 my-0.5" />
+                          </>
+                        )}
                         <div className="flex justify-between font-bold text-xs">
                           <span>TOTAL</span>
                           <span>{formatCurrency(selectedOrder.total)}</span>
@@ -3009,7 +3030,10 @@ export default function ReportsPage() {
                 </div>
                 <div className="flex justify-between">
                   <span>Kasir: {selectedOrder.user?.name?.split(' ')[0]}</span>
-                  <span className="capitalize">{(selectedOrder as any).order_type === 'dine_in' ? 'Dine In' : 'Takeaway'}</span>
+                  <span className="capitalize">
+                    {(selectedOrder as any).order_type === 'dine_in' ? 'Dine In' :
+                     (selectedOrder as any).order_type === 'delivery' ? 'Delivery' : 'Takeaway'}
+                  </span>
                 </div>
                 {selectedOrder.customer_name && (
                   <div className="mt-0.5 line-clamp-1">Plg: {selectedOrder.customer_name}</div>
@@ -3036,6 +3060,24 @@ export default function ReportsPage() {
               </div>
 
               <div className="mb-2 text-[10px] space-y-0.5">
+                {(selectedOrder as any).order_type === 'delivery' && (selectedOrder as any).delivery_fee > 0 && (
+                  <>
+                    {(selectedOrder as any).customer_address && (
+                      <div className="text-[9px] italic mb-1">Alamat: {(selectedOrder as any).customer_address}</div>
+                    )}
+                    {(selectedOrder as any).delivery_distance_km && (
+                      <div className="flex justify-between">
+                        <span>Jarak</span>
+                        <span>{(selectedOrder as any).delivery_distance_km} km</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>Ongkir</span>
+                      <span>{formatCurrency((selectedOrder as any).delivery_fee)}</span>
+                    </div>
+                    <div className="border-t border-dashed border-black/30 my-0.5" />
+                  </>
+                )}
                 <div className="flex justify-between font-bold text-xs">
                   <span>TOTAL</span>
                   <span>{formatCurrency(selectedOrder.total)}</span>
