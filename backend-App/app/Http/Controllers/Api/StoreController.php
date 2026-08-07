@@ -97,13 +97,15 @@ class StoreController extends Controller
             'parking_fee_mobil' => 'nullable|integer|min:0',
             'queue_enabled' => 'nullable|boolean',
             'parking_checkout_enabled' => 'nullable|boolean',
+            'daily_target' => 'nullable|integer|min:0',
         ]);
 
         $data = $request->only(
             'name', 'location',
             'latitude', 'longitude',
             'delivery_base_fee', 'delivery_fee_per_km', 'delivery_max_km',
-            'parking_fee_motor', 'parking_fee_mobil'
+            'parking_fee_motor', 'parking_fee_mobil',
+            'daily_target'
         );
 
         if ($request->has('queue_enabled')) {

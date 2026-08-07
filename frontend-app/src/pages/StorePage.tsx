@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { Store as StoreIcon, MapPin, Users, Save, Navigation, Crosshair, Truck, Info, Car, ClipboardList } from 'lucide-react';
+import { Store as StoreIcon, MapPin, Users, Save, Navigation, Crosshair, Truck, Info, Car, ClipboardList, Target } from 'lucide-react';
 import { formatCurrency } from '@/utils/calculations';
 
 interface StoreData {
@@ -25,6 +25,7 @@ interface StoreData {
     parking_fee_mobil?: number;
     queue_enabled?: boolean;
     parking_checkout_enabled?: boolean;
+    daily_target?: number;
     users_count?: number;
     owner?: { id: number; name: string; email: string };
 }
@@ -49,6 +50,7 @@ export default function StorePage() {
         delivery_max_km: '',
         parking_fee_motor: '2000',
         parking_fee_mobil: '3000',
+        daily_target: '0',
     });
     const [queueEnabled, setQueueEnabled] = useState(true);
     const [parkingCheckoutEnabled, setParkingCheckoutEnabled] = useState(true);
@@ -92,6 +94,7 @@ export default function StorePage() {
                 delivery_max_km: store.delivery_max_km != null ? String(store.delivery_max_km) : '',
                 parking_fee_motor: String(store.parking_fee_motor ?? 2000),
                 parking_fee_mobil: String(store.parking_fee_mobil ?? 3000),
+                daily_target: String(store.daily_target ?? 0),
             });
             setQueueEnabled(store.queue_enabled ?? true);
             setParkingCheckoutEnabled(store.parking_checkout_enabled ?? true);
@@ -190,6 +193,7 @@ export default function StorePage() {
         data.append('parking_fee_mobil', formData.parking_fee_mobil || '3000');
         data.append('queue_enabled', queueEnabled ? '1' : '0');
         data.append('parking_checkout_enabled', parkingCheckoutEnabled ? '1' : '0');
+        data.append('daily_target', formData.daily_target || '0');
         if (imageFile) {
             data.append('image', imageFile);
         }
@@ -487,6 +491,33 @@ export default function StorePage() {
                                     </div>
                                 </div>
                                 <Switch checked={queueEnabled} onCheckedChange={setQueueEnabled} />
+                            </div>
+
+                            {/* ── Target Penjualan Harian ── */}
+                            <div className="space-y-3 rounded-xl border border-border bg-secondary/20 p-4">
+                                <div className="flex items-center gap-2">
+                                    <Target className="w-4 h-4 text-primary" />
+                                    <div>
+                                        <p className="font-semibold text-sm">Target Penjualan Harian</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Dipakai untuk analisa capaian target di halaman Laporan
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs">Target per Hari</Label>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-xs text-muted-foreground shrink-0">Rp</span>
+                                        <Input
+                                            type="number"
+                                            min="0"
+                                            placeholder="6000000"
+                                            value={formData.daily_target}
+                                            onChange={e => setFormData({ ...formData, daily_target: e.target.value })}
+                                            className="text-sm"
+                                        />
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="pt-2 flex justify-end">

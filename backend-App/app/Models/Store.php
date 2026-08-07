@@ -23,6 +23,7 @@ class Store extends Model
         'parking_fee_mobil',
         'queue_enabled',
         'parking_checkout_enabled',
+        'daily_target',
     ];
 
     protected $casts = [
@@ -35,6 +36,7 @@ class Store extends Model
         'parking_fee_mobil' => 'integer',
         'queue_enabled' => 'boolean',
         'parking_checkout_enabled' => 'boolean',
+        'daily_target' => 'integer',
     ];
 
     /**

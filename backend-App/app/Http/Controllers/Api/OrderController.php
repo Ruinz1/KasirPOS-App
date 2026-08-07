@@ -917,8 +917,8 @@ class OrderController extends Controller
             'total_sales' => $orders->sum('total'),
             'total_cogs' => $orders->sum('cogs'),
             'total_profit' => $orders->sum('profit'),
-            'profit_margin' => $orders->sum('total') > 0 
-                ? ($orders->sum('profit') / $orders->sum('total')) * 100 
+            'profit_margin' => $orders->sum('total') > 0
+                ? ($orders->sum('profit') / $orders->sum('total')) * 100
                 : 0,
         ];
 

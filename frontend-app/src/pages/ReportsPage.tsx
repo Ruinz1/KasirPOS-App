@@ -77,6 +77,7 @@ export default function ReportsPage() {
   const [shoppingData, setShoppingData] = useState<{ total: number; per_day: { date: string; total: number; item_count: number }[] }>({ total: 0, per_day: [] });
   const [showGajiCol, setShowGajiCol] = useState(true); // toggle kolom Operasional
   const [showGajiSummary, setShowGajiSummary] = useState(true); // toggle estimasi gaji di card ringkasan
+  const [dailyTarget, setDailyTarget] = useState(6000000); // fallback sebelum data toko dimuat, diatur di halaman Profil Toko
 
   // Filter untuk tabel Ringkasan Penjualan Menu
   const [menuFilter, setMenuFilter] = useState({
@@ -135,16 +136,29 @@ export default function ReportsPage() {
       if (isAdmin()) {
         fetchStores();
       }
-      // Initialize store_id for admin if stores are loaded?? 
+      // Initialize store_id for admin if stores are loaded??
       // Better to handle in fetchStores or let it be empty (all stores? or must select?)
       // User request says "jika admin maka dapat filter toko". implies optional or selectable.
 
       fetchData();
+      fetchDailyTarget();
     } else if (!authLoading) {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user]);
+
+  // Target penjualan harian sekarang bisa diatur di halaman Profil Toko, bukan hardcode
+  const fetchDailyTarget = async () => {
+    try {
+      const { data } = await api.get('/store');
+      if (data?.daily_target) {
+        setDailyTarget(Number(data.daily_target));
+      }
+    } catch (error) {
+      // Biarkan pakai nilai default jika toko belum dikonfigurasi
+    }
+  };
 
   // Refetch data when filters change
   useEffect(() => {
@@ -503,8 +517,6 @@ export default function ReportsPage() {
     }
   };
 
-  const DAILY_TARGET = 6000000;
-
   const getTargetAnalysis = () => {
     if (!stats) return { target: 0, sales: 0, achieved: false, percentage: 0, days: 0 };
 
@@ -513,7 +525,7 @@ export default function ReportsPage() {
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
 
-    const totalTarget = DAILY_TARGET * diffDays;
+    const totalTarget = dailyTarget * diffDays;
     const currentSales = Number(stats.total_sales) || 0;
     const achieved = currentSales >= totalTarget;
     const percentage = totalTarget > 0 ? (currentSales / totalTarget) * 100 : 0;
@@ -585,6 +597,7 @@ export default function ReportsPage() {
       'Total Penjualan': stats?.total_sales || 0,
       'Total HPP': stats?.total_cogs || 0,
       'Total Profit': stats?.total_profit || 0,
+      'Pengeluaran Kas (Rp)': shoppingData.total || 0,
       'Target Penjualan (Rp)': analysis.target,
       'Status Target': analysis.achieved ? 'TERCAPAI' : 'BELUM TERCAPAI',
       'Persentase Capaian': `${analysis.percentage.toFixed(2)}%`,
@@ -1129,7 +1142,7 @@ export default function ReportsPage() {
                   <TrendingUp className="w-5 h-5" /> Analisa Target Penjualan
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Target: {formatCurrency(DAILY_TARGET)} x {getTargetAnalysis().days} hari = <strong>{formatCurrency(getTargetAnalysis().target)}</strong>
+                  Target: {formatCurrency(dailyTarget)} x {getTargetAnalysis().days} hari = <strong>{formatCurrency(getTargetAnalysis().target)}</strong>
                 </p>
               </div>
 
@@ -1219,6 +1232,23 @@ export default function ReportsPage() {
                 </div>
                 <div className="p-3 rounded-xl bg-success/10">
                   <TrendingUp className="w-6 h-6 text-success" />
+                </div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Pengeluaran Kas</p>
+                  <p className="text-2xl font-bold mt-1 font-display text-destructive">
+                    {formatCurrency(shoppingData.total || 0)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Belanja harian dibayar dari kas
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl bg-destructive/10">
+                  <Wallet className="w-6 h-6 text-destructive" />
                 </div>
               </div>
             </div>
