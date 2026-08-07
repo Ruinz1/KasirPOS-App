@@ -3,6 +3,8 @@
  * - App shell & aset statis: stale-while-revalidate (cepat + selalu diperbarui di belakang layar)
  * - Navigasi (HTML): network-first, fallback ke shell yang di-cache saat offline
  * - GET /api/*: network-first dengan fallback cache — POS tetap bisa memuat menu/meja saat offline
+ * - GET /api/queue* (dan endpoint realtime lain): network-only — data antrian dipoll tiap beberapa
+ *   detik dan dibagi ke banyak device, jadi tidak boleh fallback ke cache basi saat network sempat gagal
  * - Request non-GET tidak pernah di-cache (transaksi offline ditangani oleh antrian di aplikasi)
  */
 
@@ -10,6 +12,9 @@ const VERSION = 'kedaipos-v1';
 const STATIC_CACHE = `${VERSION}-static`;
 const API_CACHE = `${VERSION}-api`;
 const APP_SHELL = ['/', '/manifest.json', '/logo.png', '/favicon.ico'];
+
+// Endpoint realtime yang harus selalu ambil data terbaru dari server, tanpa fallback cache
+const REALTIME_API_PATTERNS = [/^\/api\/queue/];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -69,7 +74,13 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // API: network-first supaya data selalu segar, cache sebagai cadangan offline
+  // API realtime (antrian, dll): network-only, jangan pernah tampilkan snapshot cache yang basi
+  if (REALTIME_API_PATTERNS.some((pattern) => pattern.test(url.pathname))) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // API lain: network-first supaya data selalu segar, cache sebagai cadangan offline
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirst(request, API_CACHE));
     return;
