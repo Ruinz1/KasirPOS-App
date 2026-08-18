@@ -32,6 +32,7 @@ const MembersPage = lazy(() => import("./pages/MembersPage"));
 const PointRewardsPage = lazy(() => import("./pages/PointRewardsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const FoodOrderReceiptPage = lazy(() => import("./pages/FoodOrderReceiptPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 // Caching & background refetch global TanStack Query
@@ -108,6 +109,7 @@ const App = () => (
               <Route path="/members" element={<ProtectedRoute><MembersPage /></ProtectedRoute>} />
               <Route path="/point-rewards" element={<ProtectedRoute><PointRewardsPage /></ProtectedRoute>} />
               <Route path="/audit-logs" element={<ProtectedRoute><AuditLogPage /></ProtectedRoute>} />
+              <Route path="/nota-pesanan" element={<ProtectedRoute><FoodOrderReceiptPage /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

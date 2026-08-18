@@ -32,7 +32,8 @@ import {
   Gift,
   ScrollText,
   Menu as MenuIcon,
-  ParkingCircle
+  ParkingCircle,
+  FileText
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -43,6 +44,7 @@ import { useState, useEffect } from 'react';
 const allMenuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/', permission: 'view_dashboard' },
   { icon: ShoppingCart, label: 'Kasir', path: '/pos', permission: 'manage_orders' },
+  { icon: FileText, label: 'Nota Pesanan', path: '/nota-pesanan', permission: 'manage_orders' },
   { icon: Table, label: 'Meja', path: '/tables', permission: 'manage_orders' },
   { icon: ParkingCircle, label: 'Parkir', path: '/parking', permission: 'manage_orders' },
   { icon: ClipboardList, label: 'Antrian', path: '/queue', permission: 'manage_orders' },

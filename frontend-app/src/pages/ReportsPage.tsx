@@ -6,6 +6,7 @@ import { formatCurrency } from '@/utils/calculations';
 import { storageUrl } from '@/lib/utils';
 import { StatCardsSkeleton, TableSkeleton } from '@/components/skeletons';
 import { Badge } from '@/components/ui/badge';
+import InventoryReportTab from './InventoryReportTab';
 import {
   TrendingUp,
   DollarSign,
@@ -87,6 +88,8 @@ export default function ReportsPage() {
     kuahVariant: 'all',   // Semua / Bening / Coto / Mercon / dll
   });
 
+  // Main tab: penjualan | bahan_baku
+  const [mainTab, setMainTab] = useState<'penjualan' | 'bahan_baku'>('penjualan');
 
   // Helper for timezone correct date string YYYY-MM-DD
   const getLocalDateString = () => {
@@ -1058,6 +1061,37 @@ export default function ReportsPage() {
           </div>
         </div>
 
+        {/* Main Tab Nav */}
+        <div className="flex gap-2 border-b border-border mb-6">
+          <button
+            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              mainTab === 'penjualan'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => setMainTab('penjualan')}
+          >
+            <BarChart3 className="h-4 w-4" /> Laporan Penjualan
+          </button>
+          <button
+            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              mainTab === 'bahan_baku'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => setMainTab('bahan_baku')}
+          >
+            <ShoppingBag className="h-4 w-4" /> Bahan Baku & Overhead
+          </button>
+        </div>
+
+        {/* Bahan Baku Tab */}
+        {mainTab === 'bahan_baku' && (
+          <InventoryReportTab />
+        )}
+
+        {/* Penjualan Content (kondisional) */}
+        {mainTab === 'penjualan' && <div>
         {/* Filters */}
         <div className="card-elevated p-6 mb-8">
           <div className="flex items-center gap-2 mb-4">
@@ -3292,6 +3326,9 @@ export default function ReportsPage() {
             </div>
           </DialogContent>
         </Dialog>
+        {/* Close penjualan conditional div wrapper */}
+        </div>}
+
       </div>
     </MainLayout >
   );

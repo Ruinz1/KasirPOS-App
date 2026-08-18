@@ -4,6 +4,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\InventoryController;
+use App\Http\Controllers\Api\InventoryReportController;
+use App\Http\Controllers\Api\InventoryOverheadController;
 use App\Http\Controllers\Api\MenuController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\EmployeeController;
@@ -41,6 +43,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/inventory/bulk-update', [InventoryController::class, 'bulkUpdate']);
     Route::put('/inventory/{inventoryItem}', [InventoryController::class, 'update']);
     Route::delete('/inventory/{inventoryItem}', [InventoryController::class, 'destroy']);
+
+    // Inventory Report routes
+    Route::get('/inventory-reports/usage', [InventoryReportController::class, 'usageReport']);
+    Route::get('/inventory-reports/daily-summary', [InventoryReportController::class, 'dailySummary']);
+    Route::get('/inventory-reports/{inventoryItem}/history', [InventoryReportController::class, 'itemHistory']);
+    Route::get('/inventory-reports/{inventoryItem}/daily-usage', [InventoryReportController::class, 'itemDailyUsage']);
+
+    // Inventory Overhead routes
+    Route::get('/inventory/overheads/monthly-recap', [InventoryOverheadController::class, 'monthlyRecap']);
+    Route::get('/inventory/overheads', [InventoryOverheadController::class, 'index']);
+    Route::post('/inventory/overheads', [InventoryOverheadController::class, 'store']);
+    Route::put('/inventory/overheads/{overhead}', [InventoryOverheadController::class, 'update']);
+    Route::delete('/inventory/overheads/{overhead}', [InventoryOverheadController::class, 'destroy']);
 
     // Menu routes (all authenticated users can view, only admin/owner can modify)
     Route::get('/menu', [MenuController::class, 'index']);
@@ -138,6 +153,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/members/{member}', [MemberController::class, 'update']);
     Route::delete('/members/{member}', [MemberController::class, 'destroy']);
     Route::get('/members/{member}/transactions', [MemberController::class, 'transactions']);
+    Route::get('/members/{member}/order-history', [MemberController::class, 'orderHistory']);
+    Route::get('/members/{member}/statistics', [MemberController::class, 'statistics']);
     Route::post('/members/{member}/send-points-info', [MemberController::class, 'sendPointsInfo']);
     Route::get('/members/{member}/wa-info-status', [MemberController::class, 'waInfoStatus']);
 

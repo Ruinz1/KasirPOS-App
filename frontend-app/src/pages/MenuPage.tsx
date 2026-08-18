@@ -70,6 +70,7 @@ interface MenuItem {
     price: number;
     status: 'ready' | 'kosong' | 'pending';
     stock_deduction?: number;
+    linked_ingredient_key?: string;
   }>;
   parent_id?: number | null;
   portion_value?: number;
@@ -120,8 +121,16 @@ export default function MenuPage() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [newIngredient, setNewIngredient] = useState({ inventory_item_id: 0, amount: '' });
   const [newCustom, setNewCustom] = useState({ label: '', role: 'optional' as IngredientRole });
-  const [menuVariants, setMenuVariants] = useState<Array<{ name: string; price: number; status: 'ready' | 'kosong' | 'pending'; stock_deduction: number }>>([]);
-  const [newVariant, setNewVariant] = useState({ name: '', price: '', status: 'ready' as 'ready' | 'kosong' | 'pending', stock_deduction: '1' });
+  const [menuVariants, setMenuVariants] = useState<Array<{ name: string; price: number; status: 'ready' | 'kosong' | 'pending'; stock_deduction: number; linked_ingredient_key?: string }>>([]);
+  const [newVariant, setNewVariant] = useState({ name: '', price: '', status: 'ready' as 'ready' | 'kosong' | 'pending', stock_deduction: '1', linked_ingredient_key: '' });
+
+  // Kunci stabil untuk sebuah bahan Tipe (option), dipakai untuk mengaitkan Variasi Menu ke bahan tsb.
+  // Pakai inventory_item_id bila berstok, atau label bila custom (tanpa stok).
+  const ingredientKey = (ing: Ingredient) =>
+    ing.inventory_item_id ? `inv:${ing.inventory_item_id}` : `label:${ing.label ?? ''}`;
+
+  // Bahan bertipe "Tipe" (role=option) yang tersedia untuk dikaitkan ke Variasi Menu.
+  const typeIngredientOptions = ingredients.filter(ing => (ing.role ?? 'fixed') === 'option');
 
   useEffect(() => {
     if (isAdmin()) {
@@ -361,7 +370,7 @@ export default function MenuPage() {
     setNewIngredient({ inventory_item_id: 0, amount: '' });
     setNewCustom({ label: '', role: 'optional' });
     setMenuVariants([]);
-    setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1' });
+    setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1', linked_ingredient_key: '' });
     setEditingItem(null);
     setIsAddDialogOpen(false);
   };
@@ -832,9 +841,27 @@ export default function MenuPage() {
                                 <span className="font-medium text-sm block truncate">
                                   {variant.name} ({variant.price > 0 ? `+${formatCurrency(variant.price)}` : 'Free'})
                                 </span>
-                                <span className="text-xs text-muted-foreground">
-                                  Potong stok: <strong>{variant.stock_deduction ?? 1}</strong> porsi
-                                </span>
+                                {variant.linked_ingredient_key ? (
+                                  (() => {
+                                    const linked = typeIngredientOptions.find(ing => ingredientKey(ing) === variant.linked_ingredient_key);
+                                    const linkedInv = linked ? inventoryItems.find(i => i.id === linked.inventory_item_id) : undefined;
+                                    const linkedName = linked ? (linked.label || linkedInv?.name || '') : null;
+                                    return linkedName ? (
+                                      <span className="text-xs text-muted-foreground">
+                                        Bahan: <strong>{linkedName}</strong>
+                                        {linked && (linked.inventory_item_id ? ` (${linked.amount} ${linkedInv?.unit || ''} otomatis dipotong)` : '')}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-destructive">
+                                        Bahan Tipe terkait tidak ditemukan (dihapus?)
+                                      </span>
+                                    );
+                                  })()
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    Potong stok: <strong>{variant.stock_deduction ?? 1}</strong> porsi
+                                  </span>
+                                )}
                               </div>
                               <span
                                 className={`text-xs px-2 py-1 rounded cursor-pointer hover:opacity-80 select-none ${variant.status === 'ready' ? 'bg-green-100 text-green-700' :
@@ -877,6 +904,33 @@ export default function MenuPage() {
                             onChange={(e) => setNewVariant({ ...newVariant, price: e.target.value })}
                           />
                         </div>
+                        {typeIngredientOptions.length > 0 && (
+                          <div>
+                            <Select
+                              value={newVariant.linked_ingredient_key || 'none'}
+                              onValueChange={(v) => setNewVariant({ ...newVariant, linked_ingredient_key: v === 'none' ? '' : v })}
+                            >
+                              <SelectTrigger className="input-coffee">
+                                <SelectValue placeholder="Kaitkan ke bahan Tipe (opsional)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Tidak dikaitkan (potong stok manual)</SelectItem>
+                                {typeIngredientOptions.map((ing) => {
+                                  const inv = inventoryItems.find(i => i.id === ing.inventory_item_id);
+                                  const name = ing.label || inv?.name || 'Bahan';
+                                  return (
+                                    <SelectItem key={ingredientKey(ing)} value={ingredientKey(ing)}>
+                                      {name}{ing.inventory_item_id ? ` (${ing.amount} ${inv?.unit || ''})` : ' (tanpa stok)'}
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Jika dikaitkan, saat kasir pilih variasi ini bahan Tipe tsb otomatis terpilih & stoknya otomatis terpotong sesuai jumlah yang diatur di Bahan &mdash; tak perlu isi potong stok manual.
+                            </p>
+                          </div>
+                        )}
                         <div className="flex gap-2">
                           <Select
                             value={newVariant.status}
@@ -891,19 +945,21 @@ export default function MenuPage() {
                               <SelectItem value="kosong">Kosong</SelectItem>
                             </SelectContent>
                           </Select>
-                          <div className="flex items-center gap-1 flex-1">
-                            <Input
-                              className="w-20 input-coffee"
-                              type="number"
-                              step="0.5"
-                              min="0"
-                              placeholder="1"
-                              value={newVariant.stock_deduction}
-                              onChange={(e) => setNewVariant({ ...newVariant, stock_deduction: e.target.value })}
-                              title="Potong stok (porsi)"
-                            />
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">porsi dipotong</span>
-                          </div>
+                          {!newVariant.linked_ingredient_key && (
+                            <div className="flex items-center gap-1 flex-1">
+                              <Input
+                                className="w-20 input-coffee"
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                placeholder="1"
+                                value={newVariant.stock_deduction}
+                                onChange={(e) => setNewVariant({ ...newVariant, stock_deduction: e.target.value })}
+                                title="Potong stok (porsi)"
+                              />
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">porsi dipotong</span>
+                            </div>
+                          )}
                           <Button
                             variant="outline"
                             onClick={() => {
@@ -913,8 +969,9 @@ export default function MenuPage() {
                                   price: parseFloat(newVariant.price) || 0,
                                   status: newVariant.status,
                                   stock_deduction: parseFloat(newVariant.stock_deduction) || 1,
+                                  linked_ingredient_key: newVariant.linked_ingredient_key || undefined,
                                 }]);
-                                setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1' });
+                                setNewVariant({ name: '', price: '', status: 'ready', stock_deduction: '1', linked_ingredient_key: '' });
                               } else {
                                 toast.error("Nama variasi harus diisi");
                               }

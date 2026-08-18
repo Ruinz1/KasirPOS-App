@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\MenuItem;
 use App\Models\InventoryItem;
+use App\Models\InventoryUsageLog;
 use App\Models\Member;
 use App\Jobs\SendOrderPointsWhatsAppJob;
 use Illuminate\Http\Request;
@@ -155,6 +156,26 @@ class OrderController extends Controller
         return $deductions;
     }
 
+    /** Buffer sementara untuk usage logs yang akan di-flush setelah OrderItem dibuat */
+    private array $pendingUsageLogs = [];
+
+    /**
+     * Flush pending usage logs ke DB, diikat ke order & order_item.
+     */
+    private function flushUsageLogs(int $storeId, int $orderId, int $orderItemId): void
+    {
+        $today = now()->toDateString();
+        foreach ($this->pendingUsageLogs as $log) {
+            InventoryUsageLog::create(array_merge($log, [
+                'store_id'      => $storeId,
+                'order_id'      => $orderId,
+                'order_item_id' => $orderItemId,
+                'usage_date'    => $today,
+            ]));
+        }
+        $this->pendingUsageLogs = [];
+    }
+
     /**
      * Cek ketersediaan lalu potong stok bahan untuk item pesanan yang pakai bahan.
      * Mengembalikan ['deductions' => [...per-unit...], 'cogs' => cogsPerUnit].
@@ -182,9 +203,20 @@ class OrderController extends Controller
             if (!$inventoryItem) {
                 continue;
             }
-            $inventoryItem->current_stock -= ($d['amount'] * $quantity);
+            $totalDeducted = $d['amount'] * $quantity;
+            $inventoryItem->current_stock -= $totalDeducted;
             $inventoryItem->save();
             $cogsPerUnit += $d['amount'] * (float)$inventoryItem->price_per_unit;
+
+            // Catat ke usage log (context order)
+            $this->pendingUsageLogs[] = [
+                'inventory_item_id' => $inventoryItem->id,
+                'quantity_used'     => $totalDeducted,
+                'unit'              => $inventoryItem->unit,
+                'price_per_unit'    => (float)$inventoryItem->price_per_unit,
+                'cost_amount'       => round($totalDeducted * (float)$inventoryItem->price_per_unit, 2),
+                'usage_type'        => 'order',
+            ];
         }
 
         return ['deductions' => $deductions, 'cogs' => $cogsPerUnit];
@@ -369,7 +401,7 @@ class OrderController extends Controller
                     $finalPrice = 0;
                 }
 
-                OrderItem::create([
+                $orderItem = OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $menuItem->id,
                     'quantity' => $item['quantity'],
@@ -384,6 +416,23 @@ class OrderController extends Controller
                 if (!$menuItem->uses_ingredients) {
                     $stockItem->stock -= $deductionAmount;
                     $stockItem->save();
+
+                    // Catat usage log untuk stok menu langsung
+                    InventoryUsageLog::create([
+                        'store_id'          => $storeId,
+                        'inventory_item_id' => $stockItem->id,
+                        'order_id'          => $order->id,
+                        'order_item_id'     => $orderItem->id,
+                        'quantity_used'     => $deductionAmount,
+                        'unit'              => $stockItem->unit ?? 'pcs',
+                        'price_per_unit'    => 0,
+                        'cost_amount'       => 0,
+                        'usage_type'        => 'order',
+                        'usage_date'        => now()->toDateString(),
+                    ]);
+                } else {
+                    // Flush ingredient usage logs yang sudah di-buffer
+                    $this->flushUsageLogs($storeId, $order->id, $orderItem->id);
                 }
 
                 // Calculate totals using discounted price

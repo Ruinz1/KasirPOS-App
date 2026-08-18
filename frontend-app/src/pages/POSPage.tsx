@@ -76,6 +76,8 @@ interface MenuItem {
     name: string;
     price: number;
     status: 'ready' | 'kosong' | 'pending';
+    stock_deduction?: number;
+    linked_ingredient_key?: string;
   }>;
 }
 
@@ -584,26 +586,40 @@ export default function POSPage() {
     return options.find(o => o.is_default) || options[0];
   };
 
+  // Kunci stabil bahan Tipe (sama seperti di MenuPage), dipakai mencocokkan variant.linked_ingredient_key.
+  const ingredientKey = (ing: { inventory_item?: { id: number } | null; label?: string }) =>
+    ing.inventory_item ? `inv:${ing.inventory_item.id}` : `label:${ing.label ?? ''}`;
+
+  // Cari bahan Tipe yang dikaitkan dengan sebuah variant (mis. "Rawon" -> bahan "Kuah Rawon").
+  const getLinkedTypeOption = (item: MenuItem, variant?: { linked_ingredient_key?: string }) => {
+    if (!variant?.linked_ingredient_key) return undefined;
+    return getTypeOptions(item).find(o => ingredientKey(o) === variant.linked_ingredient_key);
+  };
+
+  // Variasi dianggap habis bila ditandai manual 'kosong' ATAU bahan Tipe yang dikaitkan sudah habis stok.
+  const isVariantOutOfStock = (item: MenuItem, variant: { status: 'ready' | 'kosong' | 'pending'; linked_ingredient_key?: string }) => {
+    if (variant.status === 'kosong') return true;
+    const linkedType = getLinkedTypeOption(item, variant);
+    return !!linkedType?.inventory_item && linkedType.inventory_item.current_stock <= 0;
+  };
+
   // Bangun baris keranjang baru dengan default variasi/Tipe sebuah menu.
   const buildCartItem = (item: MenuItem): CartItem => {
     const variants = getItemVariants(item);
-    let variantPayload: { variant?: string; variant_price?: number; variant_stock_deduction?: number } = {};
-
-    if (variants.length > 0) {
-      // Find default variant (first 'ready' one)
-      const defaultVariant = variants.find(v => v.status === 'ready');
-
-      if (defaultVariant) {
-        variantPayload = {
+    // Find default variant (first 'ready' one that's actually in stock)
+    const defaultVariant = variants.find(v => v.status === 'ready' && !isVariantOutOfStock(item, v));
+    const variantPayload: { variant?: string; variant_price?: number; variant_stock_deduction?: number } = defaultVariant
+      ? {
           variant: defaultVariant.name,
           variant_price: defaultVariant.price,
           variant_stock_deduction: (defaultVariant as any).stock_deduction ?? 1,
-        };
-      }
-    }
+        }
+      : {};
 
-    // Tipe dari bahan (role=option) — pilih default awal.
-    const defaultType = getDefaultTypeOption(item);
+    // Variasi terpilih bisa dikaitkan ke bahan Tipe (potong stok otomatis sesuai bahan tsb).
+    // Jika tidak dikaitkan, pakai Tipe default menu seperti biasa.
+    const linkedType = getLinkedTypeOption(item, defaultVariant);
+    const defaultType = linkedType || getDefaultTypeOption(item);
     const typePayload = defaultType
       ? {
           selected_type_id: defaultType.id,
@@ -728,11 +744,19 @@ export default function POSPage() {
           finalPrice = 0;
         }
 
+        // Jika variasi ini dikaitkan ke bahan Tipe, ganti Tipe terpilih otomatis
+        // supaya stok yang terpotong sesuai bahan yang dikaitkan (mis. Rawon -> Kuah Rawon).
+        const linkedType = getLinkedTypeOption(c.menuItem, variantObj);
+        const typePayload = linkedType
+          ? { selected_type_id: linkedType.id, selected_type_name: ingredientDisplayName(linkedType) }
+          : {};
+
         return {
           ...c,
           variant: variantName,
           variant_price: finalPrice,
           variant_stock_deduction: (variantObj as any).stock_deduction ?? 1,
+          ...typePayload,
         };
       }
       return c;
@@ -2399,14 +2423,18 @@ export default function POSPage() {
                               // Legacy Iga logic
                               const isIga = item.menuItem.name.toLowerCase().includes('iga') && !item.menuItem.variants?.length;
                               const displayPrice = isIga ? 0 : v.price;
-                              const isKosong = v.status === 'kosong';
+
+                              // Variasi yang dikaitkan ke bahan Tipe: anggap habis jika stok bahan tsb habis,
+                              // walau status manual variasi masih 'ready'.
+                              const linkedOutOfStock = v.status !== 'kosong' && isVariantOutOfStock(item.menuItem, v);
+                              const isKosong = v.status === 'kosong' || linkedOutOfStock;
 
                               return (
                                 <SelectItem key={v.name} value={v.name} className="text-xs" disabled={isKosong}>
                                   <span className={isKosong ? "line-through opacity-50" : ""}>
                                     {v.name}
                                     {displayPrice > 0 ? ` (+${formatCurrency(displayPrice)})` : ''}
-                                    {v.status && v.status !== 'ready' && ` (${v.status})`}
+                                    {linkedOutOfStock ? ' (habis)' : (v.status && v.status !== 'ready' && ` (${v.status})`)}
                                   </span>
                                 </SelectItem>
                               );

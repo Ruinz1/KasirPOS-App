@@ -65,12 +65,13 @@ class MemberController extends Controller
             });
         }
 
-        $members = $query->get()->map(function ($member) {
-            $member->frequency = (int) $member->frequency;
-            $member->monetary = (float) $member->monetary;
+        $members = $query->get()->map(function ($member) use ($inactiveDays) {
+            $member->frequency    = (int) $member->frequency;
+            $member->monetary     = (float) $member->monetary;
             $member->recency_days = $member->last_order_at
                 ? (int) now()->diffInDays($member->last_order_at, true)
                 : null;
+            $member->segment      = $this->classifySegment($member->frequency, $member->recency_days);
             return $member;
         });
 
@@ -85,6 +86,32 @@ class MemberController extends Controller
         }
 
         return response()->json($members->values());
+    }
+
+    /**
+     * Klasifikasi segmen RFM berdasarkan frekuensi dan recency.
+     */
+    private function classifySegment(int $frequency, ?int $recencyDays): array
+    {
+        if ($frequency === 0 || $recencyDays === null) {
+            return ['key' => 'new', 'label' => 'Baru Daftar', 'color' => 'blue'];
+        }
+        if ($frequency >= 10 && $recencyDays <= 14) {
+            return ['key' => 'champion', 'label' => 'Champion 🏆', 'color' => 'gold'];
+        }
+        if ($frequency >= 5 && $recencyDays <= 30) {
+            return ['key' => 'loyal', 'label' => 'Loyal 💛', 'color' => 'yellow'];
+        }
+        if ($frequency >= 2 && $recencyDays <= 30) {
+            return ['key' => 'potential', 'label' => 'Potential 🌱', 'color' => 'green'];
+        }
+        if ($recencyDays > 60) {
+            return ['key' => 'lost', 'label' => 'Lost 💤', 'color' => 'gray'];
+        }
+        if ($recencyDays > 30) {
+            return ['key' => 'at_risk', 'label' => 'At Risk ⚠️', 'color' => 'red'];
+        }
+        return ['key' => 'occasional', 'label' => 'Sesekali', 'color' => 'purple'];
     }
 
     public function store(Request $request)
@@ -129,6 +156,95 @@ class MemberController extends Controller
         ]);
 
         return response()->json($member);
+    }
+
+    /**
+     * Riwayat pesanan member dengan filter periode & pagination.
+     * GET /members/{member}/order-history?month=2026-08&per_page=20
+     */
+    public function orderHistory(Request $request, Member $member)
+    {
+        $this->authorizeStore($request, $member);
+
+        $query = $member->orders()
+            ->where('status', 'completed')
+            ->with(['items.menuItem:id,name,category', 'user:id,name']);
+
+        if ($request->filled('month')) {
+            // format: YYYY-MM
+            [$year, $month] = explode('-', $request->input('month'));
+            $query->whereYear('created_at', $year)->whereMonth('created_at', $month);
+        }
+        if ($request->filled('start_date')) {
+            $query->whereDate('created_at', '>=', $request->start_date);
+        }
+        if ($request->filled('end_date')) {
+            $query->whereDate('created_at', '<=', $request->end_date);
+        }
+
+        $perPage = min((int)$request->input('per_page', 20), 100);
+        $orders  = $query->orderByDesc('created_at')->paginate($perPage);
+
+        return response()->json($orders);
+    }
+
+    /**
+     * Statistik lengkap member: total belanja, rata-rata, menu favorit, aktivitas bulanan, segmen.
+     * GET /members/{member}/statistics
+     */
+    public function statistics(Request $request, Member $member)
+    {
+        $this->authorizeStore($request, $member);
+
+        $completedOrders = $member->orders()->where('status', 'completed');
+
+        $totalOrders   = (clone $completedOrders)->count();
+        $totalSpent    = (float)(clone $completedOrders)->sum('total');
+        $avgOrderValue = $totalOrders > 0 ? round($totalSpent / $totalOrders, 2) : 0;
+        $lastOrderAt   = (clone $completedOrders)->max('created_at');
+        $firstOrderAt  = (clone $completedOrders)->min('created_at');
+        $recencyDays   = $lastOrderAt ? (int)now()->diffInDays($lastOrderAt, true) : null;
+
+        // Menu favorit (top 5 item paling sering dipesan)
+        $favoriteMenus = \App\Models\OrderItem::whereIn(
+                'order_id',
+                $member->orders()->where('status', 'completed')->select('id')
+            )
+            ->select('menu_item_id', \Illuminate\Support\Facades\DB::raw('SUM(quantity) as total_qty'))
+            ->with('menuItem:id,name,category')
+            ->groupBy('menu_item_id')
+            ->orderByDesc('total_qty')
+            ->limit(5)
+            ->get()
+            ->map(fn($oi) => [
+                'menu_item_id' => $oi->menu_item_id,
+                'name'         => $oi->menuItem->name ?? '-',
+                'category'     => $oi->menuItem->category ?? '-',
+                'total_qty'    => (int)$oi->total_qty,
+            ]);
+
+        // Aktivitas bulanan (12 bulan terakhir)
+        $monthlyActivity = (clone $completedOrders)
+            ->selectRaw('DATE_FORMAT(created_at, "%Y-%m") as month, COUNT(*) as order_count, SUM(total) as total_spent')
+            ->where('created_at', '>=', now()->subMonths(12))
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get();
+
+        $segment = $this->classifySegment($totalOrders, $recencyDays);
+
+        return response()->json([
+            'member'           => $member->only(['id', 'name', 'phone', 'total_points', 'lifetime_points', 'created_at']),
+            'total_orders'     => $totalOrders,
+            'total_spent'      => $totalSpent,
+            'avg_order_value'  => $avgOrderValue,
+            'first_order_at'   => $firstOrderAt,
+            'last_order_at'    => $lastOrderAt,
+            'recency_days'     => $recencyDays,
+            'segment'          => $segment,
+            'favorite_menus'   => $favoriteMenus,
+            'monthly_activity' => $monthlyActivity,
+        ]);
     }
 
     public function update(Request $request, Member $member)
