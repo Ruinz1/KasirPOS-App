@@ -15,6 +15,7 @@ class OrderItem extends Model
         'note',
         'is_takeaway',
         'is_addon',
+        'batch_id',
         'variant_stock_deduction',
         'ingredient_deductions',
     ];
@@ -41,5 +42,13 @@ class OrderItem extends Model
     public function menuItem(): BelongsTo
     {
         return $this->belongsTo(MenuItem::class);
+    }
+
+    /**
+     * Batch tambahan (null = pesanan awal / batch 0)
+     */
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(OrderItemBatch::class, 'batch_id');
     }
 }

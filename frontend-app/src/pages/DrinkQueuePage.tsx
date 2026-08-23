@@ -11,6 +11,8 @@ import { CheckCircle2, Undo2, Coffee, Pencil, RefreshCw, GlassWater, Clock, Maxi
 import { MainLayout } from "@/components/layout/MainLayout";
 import { StatCardsSkeleton, CardGridSkeleton } from "@/components/skeletons";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
+import { PayBatchDialog } from "@/components/PayBatchDialog";
+import { BatchReceipt, BatchReceiptData } from "@/components/BatchReceipt";
 import {
     Dialog,
     DialogContent,
@@ -19,23 +21,17 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { useOrderElapsed, formatElapsed, getElapsedColorClass, isUrgent, isWarning } from "@/hooks/useOrderElapsed";
-
-interface OrderItem {
-    id: number;
-    menu_item_id: number;
-    quantity: number;
-    price: number;
-    note: string | null;
-    is_takeaway?: boolean;
-    is_addon?: boolean;
-    menu_item: {
-        id: number;
-        name: string;
-        price: number;
-        category?: string;
-    } | null;
-    created_at?: string;
-}
+import {
+    QueueCard,
+    QueueBatch,
+    QueueItem as OrderItem,
+    flattenOrdersToCards,
+    sortCardsGrouped,
+    shouldHideCard,
+    cardStatusEndpoint,
+    isFoodItem,
+    isDrinkItem,
+} from "@/hooks/useQueueBoard";
 
 interface QueueOrder {
     id: number;
@@ -58,78 +54,53 @@ interface QueueOrder {
     table?: { id: number; table_number: string; capacity: number } | null;
     hold_reason?: string | null;
     drink_hold_reason?: string | null;
+    batches?: QueueBatch[];
 }
 
-const DRINK_CATEGORIES = ["minuman", "drink", "beverage", "drinks"];
-
-const isFoodItem = (item: OrderItem) => !DRINK_CATEGORIES.includes((item.menu_item?.category || "").toLowerCase());
-const isDrinkItem = (item: OrderItem) => DRINK_CATEGORIES.includes((item.menu_item?.category || "").toLowerCase());
-
-/** True jika order ini adalah re-activated (sudah pernah selesai lalu ada tambahan) */
-const isOrderReactivated = (order: QueueOrder) =>
-    !!(order.queue_completed_at && order.queue_status !== "completed");
-
-const getDisplayItems = (order: QueueOrder) => {
-    const reactivated = isOrderReactivated(order);
-    return reactivated
-        ? order.items.filter(i => {
-            if (!i.is_addon) return false;
-            const cat = (i.menu_item?.category || "").toLowerCase();
-            return ["makanan", "minuman"].includes(cat);
-        })
-        : [...order.items].sort((a, b) => a.id - b.id);
-};
+const formatRupiah = (n: number) =>
+    new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
 
 /** Item minuman original (bukan addon) untuk konteks re-order */
 const getOriginalDrinkItems = (order: QueueOrder) =>
     order.items.filter(i => !i.is_addon && isDrinkItem(i)).sort((a, b) => a.id - b.id);
 
-const shouldHideOrder = (order: QueueOrder): boolean => {
-    const displayItems = getDisplayItems(order);
-    const hasFoodSection = displayItems.filter(isFoodItem).length > 0;
-    const hasDrinkSection = displayItems.filter(isDrinkItem).length > 0;
-    const foodCompleted = order.queue_status === "completed";
-    const drinkCompleted = order.drink_queue_status === "completed";
-    if (hasFoodSection && hasDrinkSection) return foodCompleted && drinkCompleted;
-    if (hasFoodSection) return foodCompleted;
-    if (hasDrinkSection) return drinkCompleted;
-    return foodCompleted;
-};
-
 // ─── Sub-komponen OrderCard ──────────────────────────────────────────────────
 interface DrinkOrderCardProps {
-    order: QueueOrder;
+    card: QueueCard<QueueOrder>;
     isFullscreen: boolean;
     canHold: boolean;
     editingNotes: number | null;
     notesValue: string;
-    onDrinkStatusChange: (id: number, completed: boolean) => void;
-    onHoldClick: (order: QueueOrder) => void;
-    onResumeHold: (id: number) => void;
+    onDrinkStatusChange: (card: QueueCard<QueueOrder>, completed: boolean) => void;
+    onHoldClick: (card: QueueCard<QueueOrder>) => void;
+    onResumeHold: (card: QueueCard<QueueOrder>) => void;
     onEditNotes: (id: number, current: string) => void;
     onSaveNotes: (id: number) => void;
     onCancelNotes: () => void;
     onNotesChange: (val: string) => void;
     onEditOrder: (order: QueueOrder) => void;
+    onPayBatch: (card: QueueCard<QueueOrder>) => void;
 }
 
 const DrinkOrderCard = ({
-    order, isFullscreen, canHold,
+    card, isFullscreen, canHold,
     editingNotes, notesValue,
     onDrinkStatusChange, onHoldClick, onResumeHold,
     onEditNotes, onSaveNotes, onCancelNotes, onNotesChange,
-    onEditOrder,
+    onEditOrder, onPayBatch,
 }: DrinkOrderCardProps) => {
-    const elapsed = useOrderElapsed(order.created_at);
-    const displayItems = getDisplayItems(order);
-    const drinkItems = displayItems.filter(isDrinkItem);
+    const order = card.order;
+    const elapsed = useOrderElapsed(card.cardCreatedAt);
+    const drinkItems = card.items.filter(isDrinkItem);
     if (drinkItems.length === 0) return null;
 
-    const isReactivated = isOrderReactivated(order);
+    const isBatchCard = card.kind === "batch";
+    const isReactivated = card.kind === "legacy"
+        && !!(order.queue_completed_at && order.queue_status !== "completed");
     const originalDrinkItems = getOriginalDrinkItems(order);
-    const hasNewAddons = !isReactivated && drinkItems.some(i => i.is_addon);
-    const drinkCompleted = order.drink_queue_status === "completed";
-    const isHold = order.drink_queue_status === "hold";
+    const hasNewAddons = card.kind === "legacy" && !isReactivated && drinkItems.some(i => i.is_addon);
+    const drinkCompleted = card.drink_queue_status === "completed";
+    const isHold = card.drink_queue_status === "hold";
     const urgent = !drinkCompleted && !isHold && isUrgent(elapsed);
     const warning = !drinkCompleted && !isHold && isWarning(elapsed);
 
@@ -141,7 +112,7 @@ const DrinkOrderCard = ({
     else if (isHold) cardClass += "border-slate-400 bg-slate-50 dark:bg-slate-900/30 ring-2 ring-slate-400/40 shadow-md opacity-90";
     else if (urgent) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-500/50 shadow-red-200 shadow-lg animate-pulse";
     else if (isReactivated) cardClass += "border-red-500 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-400/40 shadow-red-100 shadow-lg";
-    else if (hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md";
+    else if (isBatchCard || hasNewAddons) cardClass += "border-purple-500 bg-purple-50 dark:bg-purple-950/20 ring-2 ring-purple-400/30 shadow-md";
     else if (warning) cardClass += "border-yellow-400 bg-yellow-50/50 dark:bg-yellow-950/10 shadow-md";
     else cardClass += "border-blue-300 bg-white dark:bg-blue-950/10 shadow-sm";
 
@@ -150,15 +121,47 @@ const DrinkOrderCard = ({
     else if (isHold) barColor += "bg-slate-500";
     else if (urgent) barColor += "bg-red-500";
     else if (isReactivated) barColor += "bg-red-500";
-    else if (hasNewAddons) barColor += "bg-purple-500";
+    else if (isBatchCard || hasNewAddons) barColor += "bg-purple-500";
     else if (warning) barColor += "bg-yellow-400";
     else barColor += "bg-blue-400";
 
     return (
-        <Card key={order.id} className={cardClass}>
+        <Card key={card.cardKey} className={cardClass}>
             <div className={barColor} />
 
             <CardContent className={isFullscreen ? "p-3" : "p-4"}>
+                {/* Banner kartu tambahan (batch terpisah) */}
+                {isBatchCard && !drinkCompleted && (
+                    <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded-lg mb-3 font-bold border border-purple-200 dark:border-purple-800 flex items-center gap-2">
+                        <span className="text-base">🔔</span>
+                        <div>{card.label.toUpperCase()}<div className="font-normal text-[10px] opacity-90">Pesanan tambahan — antrian terpisah</div></div>
+                    </div>
+                )}
+
+                {/* Tagihan tambahan — dibayar terpisah dari pesanan awal */}
+                {isBatchCard && card.batch && (
+                    <div className={`text-xs p-2 rounded-lg mb-3 border flex items-center justify-between gap-2 ${
+                        card.batch.payment_status === "paid"
+                            ? "bg-green-50 dark:bg-green-950/20 border-green-300 text-green-700 dark:text-green-300"
+                            : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 text-amber-800 dark:text-amber-300"
+                    }`}>
+                        <div>
+                            <span className="font-bold">{formatRupiah(Number(card.batch.subtotal))}</span>
+                            <div className="text-[10px] opacity-90">
+                                {card.batch.payment_status === "paid"
+                                    ? `Lunas · ${(card.batch.payment_method || "").toUpperCase()}`
+                                    : "Belum dibayar"}
+                            </div>
+                        </div>
+                        {card.batch.payment_status !== "paid" && (
+                            <Button size="sm" className="h-7 text-xs bg-amber-500 hover:bg-amber-600 text-white shrink-0"
+                                onClick={() => onPayBatch(card)}>
+                                Bayar
+                            </Button>
+                        )}
+                    </div>
+                )}
+
                 {/* RE-ORDER Banner */}
                 {isReactivated && !drinkCompleted && (
                     <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs p-2 rounded-lg mb-3 font-bold border border-red-200 dark:border-red-800 flex items-center gap-2 animate-pulse">
@@ -183,9 +186,9 @@ const DrinkOrderCard = ({
                     </div>
                 )}
 
-                {isHold && order.drink_hold_reason && (
+                {isHold && card.drink_hold_reason && (
                     <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs p-2 rounded-lg mb-3 font-medium border border-slate-300 dark:border-slate-600">
-                        <span className="font-bold">Alasan Hold:</span> {order.drink_hold_reason}
+                        <span className="font-bold">Alasan Hold:</span> {card.drink_hold_reason}
                     </div>
                 )}
 
@@ -208,9 +211,9 @@ const DrinkOrderCard = ({
                                         🔄 RE-ORDER
                                     </Badge>
                                 )}
-                                {hasNewAddons && (
+                                {(isBatchCard || hasNewAddons) && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit border-purple-400 text-purple-600 bg-purple-50">
-                                        + TAMBAHAN
+                                        {isBatchCard ? `+ ${card.label.toUpperCase()}` : "+ TAMBAHAN"}
                                     </Badge>
                                 )}
                             </div>
@@ -257,7 +260,7 @@ const DrinkOrderCard = ({
                         : "bg-blue-500"
                     }`}>
                         <Coffee className="h-3.5 w-3.5" />
-                        <span>{isReactivated ? "🔄 TAMBAHAN BARU" : "DAFTAR MINUMAN"}</span>
+                        <span>{isReactivated ? "🔄 TAMBAHAN BARU" : isBatchCard ? `🔔 ${card.label.toUpperCase()}` : "DAFTAR MINUMAN"}</span>
                         {drinkCompleted && <span className="ml-auto bg-white/25 px-1.5 py-0.5 rounded text-[10px]">✓ Selesai</span>}
                     </div>
 
@@ -293,7 +296,7 @@ const DrinkOrderCard = ({
                                     <span className={`font-medium truncate ${isFullscreen ? "text-sm" : ""}`}>{item.menu_item?.name || "Item Dihapus"}</span>
                                     {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
                                     {item.is_takeaway && <span className="text-destructive text-[10px] font-semibold ml-1">(Bungkus)</span>}
-                                    {!isReactivated && item.is_addon && (
+                                    {!isReactivated && !isBatchCard && item.is_addon && (
                                         <span className="text-purple-600 text-[10px] font-bold ml-1">● BARU</span>
                                     )}
                                 </div>
@@ -305,7 +308,7 @@ const DrinkOrderCard = ({
                     {/* Action Button */}
                     <div className="flex flex-col gap-1 p-2 bg-white/40 dark:bg-transparent border-t border-blue-100 dark:border-blue-900/30">
                         {drinkCompleted ? (
-                            <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => onDrinkStatusChange(order.id, false)}>
+                            <Button size="sm" variant="ghost" className="w-full h-8 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => onDrinkStatusChange(card, false)}>
                                 <Undo2 className="h-3.5 w-3.5 mr-1.5" /> Batalkan Selesai
                             </Button>
                         ) : (
@@ -313,16 +316,16 @@ const DrinkOrderCard = ({
                                 <Button
                                     size="sm"
                                     className={`flex-1 h-8 text-xs text-white shadow-sm ${urgent ? "bg-red-600 hover:bg-red-700" : isReactivated ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}
-                                    onClick={() => onDrinkStatusChange(order.id, true)}
+                                    onClick={() => onDrinkStatusChange(card, true)}
                                 >
-                                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated ? "Selesaikan Tambahan" : "Minuman Selesai"}
+                                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> {isReactivated || isBatchCard ? "Selesaikan Tambahan" : "Minuman Selesai"}
                                 </Button>
                                 {canHold && (isHold ? (
-                                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 shadow-sm" onClick={() => onResumeHold(order.id)} title="Lanjutkan Pesanan">
+                                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-500 text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 shadow-sm" onClick={() => onResumeHold(card)} title="Lanjutkan Pesanan">
                                         <RefreshCw className="h-4 w-4" />
                                     </Button>
                                 ) : (
-                                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600 shadow-sm" onClick={() => onHoldClick(order)} title="Tahan Pesanan">
+                                    <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-blue-300 text-blue-500 hover:bg-blue-50 hover:text-blue-600 shadow-sm" onClick={() => onHoldClick(card)} title="Tahan Pesanan">
                                         <Clock className="h-4 w-4" />
                                     </Button>
                                 ))}
@@ -332,7 +335,7 @@ const DrinkOrderCard = ({
                 </div>
 
                 {/* Notes */}
-                {!isFullscreen && (
+                {!isFullscreen && !isBatchCard && (
                     <div className="border-t pt-2">
                         <p className="text-[11px] font-semibold text-muted-foreground mb-1">📝 Catatan</p>
                         {editingNotes === order.id ? (
@@ -365,7 +368,7 @@ const DrinkOrderCard = ({
 
 // ─── Halaman Utama ───────────────────────────────────────────────────────────
 const DrinkQueuePage = () => {
-    const [orders, setOrders] = useState<QueueOrder[]>([]);
+    const [cards, setCards] = useState<QueueCard<QueueOrder>[]>([]);
     const [loading, setLoading] = useState(true);
     const [pendingCount, setPendingCount] = useState(0);
     const [completedToday, setCompletedToday] = useState(0);
@@ -373,13 +376,23 @@ const DrinkQueuePage = () => {
     const [notesValue, setNotesValue] = useState("");
     const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
     const [showEditDialog, setShowEditDialog] = useState(false);
-    const [holdDialogOrder, setHoldDialogOrder] = useState<QueueOrder | null>(null);
+    const [holdDialogCard, setHoldDialogCard] = useState<QueueCard<QueueOrder> | null>(null);
+    const [payCard, setPayCard] = useState<QueueCard<QueueOrder> | null>(null);
+    const [batchReceipt, setBatchReceipt] = useState<BatchReceiptData | null>(null);
+
+    // Cetak nota tambahan setelah data nota ter-render
+    useEffect(() => {
+        if (!batchReceipt) return;
+        const t = setTimeout(() => window.print(), 300);
+        return () => clearTimeout(t);
+    }, [batchReceipt]);
     const [holdReason, setHoldReason] = useState("");
     const [isFullscreen, setIsFullscreen] = useState(false);
     const { toast } = useToast();
     const { canEdit, hasAnyPosition } = useAuth();
     const canHold = canEdit() || hasAnyPosition(HOLD_QUEUE_POSITIONS);
     const prevOrdersRef = useRef<QueueOrder[]>([]);
+    const prevCardKeysRef = useRef<string[]>([]);
     const containerRef = useRef<HTMLDivElement>(null);
 
     // ── Fullscreen ──────────────────────────────────────────────────────────
@@ -438,27 +451,27 @@ const DrinkQueuePage = () => {
             const data: QueueOrder[] = res.data;
             const isChanged = JSON.stringify(data) !== JSON.stringify(prevOrdersRef.current);
             if (isChanged) {
-                const prevIds = new Set(prevOrdersRef.current.map(o => o.id));
-                const newOrders = data.filter(o => !prevIds.has(o.id));
-                const isFirst = prevOrdersRef.current.length === 0 && data.length > 0;
-                if ((newOrders.length > 0 || isFirst) && (isFirst ? data : newOrders).some(o => o.queue_status !== "completed")) {
+                const drinkCards = sortCardsGrouped(
+                    flattenOrdersToCards(data).filter(
+                        c => !shouldHideCard(c) && c.items.some(isDrinkItem)
+                    )
+                );
+
+                const prevKeys = new Set(prevCardKeysRef.current);
+                const newCards = drinkCards.filter(c => !prevKeys.has(c.cardKey));
+                const isFirst = prevCardKeysRef.current.length === 0 && drinkCards.length > 0;
+                if ((newCards.length > 0 || isFirst) && (isFirst ? drinkCards : newCards).some(c => c.drink_queue_status !== "completed")) {
                     playNotificationSound();
-                    if (newOrders.length > 0 && !isFirst) {
+                    if (newCards.length > 0 && !isFirst) {
                         toast({ title: "🔔 Pesanan Masuk!", description: "Ada pesanan baru.", className: "bg-blue-600 text-white border-none shadow-lg" });
                         setTimeout(() => speakNewOrder(), 800);
                     }
                 }
-                const drinkOrders = data.filter(o => {
-                    if (shouldHideOrder(o)) return false;
-                    const items = getDisplayItems(o);
-                    return items.filter(isDrinkItem).length > 0;
-                }).sort((a, b) => {
-                    const p: Record<string, number> = { in_progress: 0, pending: 1, hold: 2, completed: 3 };
-                    return (p[a.queue_status] ?? 1) - (p[b.queue_status] ?? 1) || a.id - b.id;
-                });
-                setOrders(drinkOrders);
-                setPendingCount(drinkOrders.filter(o => o.drink_queue_status !== "completed").length);
+
+                setCards(drinkCards);
+                setPendingCount(drinkCards.filter(c => c.drink_queue_status !== "completed").length);
                 prevOrdersRef.current = data;
+                prevCardKeysRef.current = drinkCards.map(c => c.cardKey);
             }
         } catch (e) {
             console.error("Error fetching queue:", e);
@@ -484,25 +497,15 @@ const DrinkQueuePage = () => {
     }, []);
 
     // ── Actions ─────────────────────────────────────────────────────────────
-    const handleDrinkStatusChange = async (orderId: number, completed: boolean) => {
+    const handleDrinkStatusChange = async (card: QueueCard<QueueOrder>, completed: boolean) => {
         try {
-            const res = await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: completed ? "completed" : "pending" });
-            if (completed) {
-                const updated = res.data?.order as QueueOrder | undefined;
-                const order = orders.find(o => o.id === orderId);
-                const toCheck = updated ?? (order ? { ...order, drink_queue_status: "completed" as const } : null);
-                if (toCheck && shouldHideOrder(toCheck)) {
-                    setOrders(prev => prev.filter(o => o.id !== orderId));
-                    prevOrdersRef.current = prevOrdersRef.current.filter(o => o.id !== orderId);
-                    toast({ title: "☕ Minuman Selesai!", description: "Dikeluarkan dari antrian.", className: "bg-blue-600 text-white border-none" });
-                    fetchStatistics();
-                    return;
-                } else {
-                    toast({ title: "☕ Minuman Selesai", description: "Minuman telah selesai dibuat!" });
-                }
-            } else {
-                toast({ title: "↩ Dibatalkan", description: "Status minuman dikembalikan ke pending" });
-            }
+            await api.put(cardStatusEndpoint(card, "drink"), {
+                drink_queue_status: completed ? "completed" : "pending",
+            });
+            toast({
+                title: completed ? "☕ Minuman Selesai" : "↩ Dibatalkan",
+                description: completed ? "Minuman telah selesai dibuat!" : "Status minuman dikembalikan ke pending",
+            });
             fetchQueue();
             fetchStatistics();
         } catch (e) {
@@ -511,20 +514,20 @@ const DrinkQueuePage = () => {
     };
 
     const handleHoldOrder = async () => {
-        if (!holdDialogOrder) return;
+        if (!holdDialogCard) return;
         try {
-            await api.put(`/queue/${holdDialogOrder.id}/drink-status`, { drink_queue_status: "hold", hold_reason: holdReason });
+            await api.put(cardStatusEndpoint(holdDialogCard, "drink"), { drink_queue_status: "hold", hold_reason: holdReason });
             toast({ title: "Berhasil", description: "Pesanan ditahan" });
             fetchQueue();
-            setHoldDialogOrder(null);
+            setHoldDialogCard(null);
             setHoldReason("");
         } catch (e) {
             toast({ title: "Error", description: "Gagal menahan pesanan", variant: "destructive" });
         }
     };
 
-    const handleResumeHold = async (orderId: number) => {
-        await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: "pending" });
+    const handleResumeHold = async (card: QueueCard<QueueOrder>) => {
+        await api.put(cardStatusEndpoint(card, "drink"), { drink_queue_status: "pending" });
         fetchQueue();
     };
 
@@ -590,7 +593,7 @@ const DrinkQueuePage = () => {
                             </div>
                             <div className="w-px h-8 bg-white/30" />
                             <div className="text-center">
-                                <div className={`font-bold ${isFullscreen ? "text-xl" : "text-2xl"}`}>{orders.length}</div>
+                                <div className={`font-bold ${isFullscreen ? "text-xl" : "text-2xl"}`}>{cards.length}</div>
                                 <div className="text-[11px] text-blue-100">Antrian</div>
                             </div>
                         </div>
@@ -615,7 +618,7 @@ const DrinkQueuePage = () => {
 
             {/* Content */}
             <div className={isFullscreen ? "p-3" : "p-6"}>
-                {orders.length === 0 ? (
+                {cards.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-24 text-center">
                         <div className="bg-blue-100 dark:bg-blue-950/30 rounded-full p-6 mb-4">
                             <Coffee className="h-14 w-14 text-blue-400" />
@@ -628,22 +631,23 @@ const DrinkQueuePage = () => {
                         ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
                         : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
                     }`}>
-                        {orders.map(order => (
+                        {cards.map(card => (
                             <DrinkOrderCard
-                                key={order.id}
-                                order={order}
+                                key={card.cardKey}
+                                card={card}
                                 isFullscreen={isFullscreen}
                                 canHold={canHold}
                                 editingNotes={editingNotes}
                                 notesValue={notesValue}
                                 onDrinkStatusChange={handleDrinkStatusChange}
-                                onHoldClick={(o) => { setHoldDialogOrder(o); setHoldReason(""); }}
+                                onHoldClick={(c) => { setHoldDialogCard(c); setHoldReason(""); }}
                                 onResumeHold={handleResumeHold}
                                 onEditNotes={(id, val) => { setEditingNotes(id); setNotesValue(val); }}
                                 onSaveNotes={handleNotesUpdate}
                                 onCancelNotes={() => { setEditingNotes(null); setNotesValue(""); }}
                                 onNotesChange={setNotesValue}
                                 onEditOrder={(o) => { setEditingOrder(o); setShowEditDialog(true); }}
+                                onPayBatch={setPayCard}
                             />
                         ))}
                     </div>
@@ -660,17 +664,40 @@ const DrinkQueuePage = () => {
                 order={editingOrder}
                 onSuccess={() => { prevOrdersRef.current = []; fetchQueue(); fetchStatistics(); }}
             />
-            <Dialog open={!!holdDialogOrder} onOpenChange={(open) => !open && setHoldDialogOrder(null)}>
+            <PayBatchDialog
+                batch={payCard?.batch ?? null}
+                label={payCard?.label ?? ""}
+                dailyNumber={payCard?.order.daily_number}
+                customerName={payCard?.order.customer_name}
+                onOpenChange={open => { if (!open) setPayCard(null); }}
+                onPaid={paidBatch => {
+                    if (payCard) {
+                        setBatchReceipt({
+                            batch: paidBatch,
+                            label: payCard.label,
+                            dailyNumber: payCard.order.daily_number,
+                            customerName: payCard.order.customer_name,
+                            orderType: payCard.order.order_type,
+                            tableNumber: payCard.order.table?.table_number ?? null,
+                            cashierName: payCard.order.user?.name,
+                        });
+                    }
+                    prevOrdersRef.current = [];
+                    fetchQueue();
+                    fetchStatistics();
+                }}
+            />
+            <Dialog open={!!holdDialogCard} onOpenChange={(open) => !open && setHoldDialogCard(null)}>
                 <DialogContent className="sm:max-w-[400px]">
                     <DialogHeader>
-                        <DialogTitle>Tahan Pesanan #{holdDialogOrder?.daily_number}</DialogTitle>
+                        <DialogTitle>Tahan {holdDialogCard?.label} #{holdDialogCard?.order.daily_number}</DialogTitle>
                     </DialogHeader>
                     <div className="py-4">
                         <label className="text-sm font-medium mb-2 block">Alasan Pesanan Ditahan:</label>
                         <Textarea value={holdReason} onChange={(e) => setHoldReason(e.target.value)} placeholder="Contoh: Menunggu es batu, pelanggan belum bayar..." className="min-h-[100px]" />
                     </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setHoldDialogOrder(null)}>Batal</Button>
+                        <Button variant="outline" onClick={() => setHoldDialogCard(null)}>Batal</Button>
                         <Button className="bg-slate-500 hover:bg-slate-600 text-white" onClick={handleHoldOrder} disabled={!holdReason.trim()}>Tahan Pesanan</Button>
                     </DialogFooter>
                 </DialogContent>
@@ -679,9 +706,9 @@ const DrinkQueuePage = () => {
     );
 
     return isFullscreen ? (
-        <>{pageContent}{dialogs}</>
+        <><BatchReceipt data={batchReceipt} />{pageContent}{dialogs}</>
     ) : (
-        <MainLayout>{pageContent}{dialogs}</MainLayout>
+        <MainLayout><BatchReceipt data={batchReceipt} />{pageContent}{dialogs}</MainLayout>
     );
 };
 

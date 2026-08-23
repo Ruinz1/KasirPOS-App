@@ -38,6 +38,7 @@ interface MenuItem {
 
 interface EditItem {
     id?: number; // existing order_item id (undefined for new items)
+    batch_id?: number | null; // batch tambahan asal item (null = pesanan awal)
     menu_item_id: number;
     menu_item_name: string;
     menu_item_category: string;
@@ -168,6 +169,7 @@ export function EditQueueOrderDialog({
 
             return {
                 id: item.id,
+                batch_id: item.batch_id ?? null,
                 menu_item_id: item.menu_item_id || item.menu_item?.id,
                 menu_item_name: item.menu_item?.name || 'Item Dihapus',
                 menu_item_category: item.menu_item?.category || '',
@@ -409,6 +411,7 @@ export function EditQueueOrderDialog({
                         note: fullNote || null,
                         is_takeaway: item.is_takeaway,
                         additional_price: item.additional_price || 0,
+                        batch_id: item.batch_id ?? null,
                     };
                 }),
                 order_type: order.order_type || 'dine_in',

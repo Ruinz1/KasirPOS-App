@@ -9,6 +9,8 @@ use App\Models\MenuItem;
 use App\Models\InventoryItem;
 use App\Models\InventoryUsageLog;
 use App\Models\Member;
+use App\Models\Table;
+use App\Models\OrderItemBatch;
 use App\Jobs\SendOrderPointsWhatsAppJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -282,6 +284,7 @@ class OrderController extends Controller
             'payment_method' => 'nullable|in:cash,card,qris',
             'payment_status' => 'nullable|in:paid,pending',
             'order_type' => 'required|in:dine_in,takeaway,delivery',
+            'table_id' => 'nullable|exists:tables,id',
             'paid_amount' => 'nullable|numeric|min:0',
             'initial_cash' => 'nullable|numeric|min:0',
             'items' => 'required|array|min:1',
@@ -474,6 +477,20 @@ class OrderController extends Controller
             
             $order->save();
 
+            // Assign meja hanya untuk dine-in yang sudah lunas (sesuai pilihan meja di form kasir).
+            // Meja boleh sedang terisi order lain: pesanan tambahan di meja yang sama dibuat sebagai
+            // nota baru terpisah, dan meja tsb dialihkan mengikuti nota terbaru ini.
+            if (!empty($validated['table_id']) && $validated['order_type'] === 'dine_in' && $order->payment_status === 'paid') {
+                $table = Table::find($validated['table_id']);
+                if ($table) {
+                    $table->status = 'occupied';
+                    $table->current_order_id = $order->id;
+                    $table->save();
+                    $order->table_id = $table->id;
+                    $order->save();
+                }
+            }
+
             // Handle member points
             if ($member) {
                 // Redeem points (deduct)
@@ -637,6 +654,16 @@ class OrderController extends Controller
             $order->save();
         }
 
+        // Assign meja yang sudah dipilih di form kasir begitu pesanan dine-in pending ini dilunasi.
+        if ($wasPending && $order->payment_status === 'paid' && $order->order_type === 'dine_in' && $order->table_id) {
+            $table = Table::find($order->table_id);
+            if ($table) {
+                $table->status = 'occupied';
+                $table->current_order_id = $order->id;
+                $table->save();
+            }
+        }
+
         // Earn points for member when pending order is settled
         if ($wasPending && $order->payment_status === 'paid' && $order->member_id && !$order->points_earned) {
             $member = Member::find($order->member_id);
@@ -685,6 +712,7 @@ class OrderController extends Controller
             'items.*.selected_type_id' => 'nullable|integer|exists:menu_ingredients,id',
             'items.*.removed_ingredient_ids' => 'nullable|array',
             'items.*.removed_ingredient_ids.*' => 'integer',
+            'items.*.batch_id' => 'nullable|integer|exists:order_item_batches,id',
             'customer_name' => 'nullable|string',
             'order_type' => 'required|in:dine_in,takeaway',
         ]);
@@ -731,6 +759,10 @@ class OrderController extends Controller
                     $finalPrice = 0;
                 }
 
+                // Pertahankan batch asal item agar kartu antrian tambahan tidak jadi yatim
+                // saat pesanan diedit dari papan antrian.
+                $itemBatchId = $item['batch_id'] ?? null;
+
                 OrderItem::create([
                     'order_id' => $order->id,
                     'menu_item_id' => $menuItem->id,
@@ -738,6 +770,8 @@ class OrderController extends Controller
                     'price' => $finalPrice,
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
+                    'is_addon' => !empty($itemBatchId),
+                    'batch_id' => $itemBatchId,
                     'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
                     'ingredient_deductions' => $menuItem->uses_ingredients ? $ingredientResult['deductions'] : null,
                 ]);
@@ -780,9 +814,13 @@ class OrderController extends Controller
             }
 
             $order->save();
+
+            // Batch tanpa item tersisa akan tampil sebagai kartu kosong di antrian — hapus.
+            $order->batches()->doesntHave('items')->delete();
+
             DB::commit();
 
-            return response()->json($order->load(['items.menuItem', 'user', 'store']));
+            return response()->json($order->load(['items.menuItem', 'user', 'store', 'batches']));
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => 'Failed to update order', 'error' => $e->getMessage()], 500);
@@ -817,6 +855,21 @@ class OrderController extends Controller
             $total = $order->total;
             $cogs = $order->cogs;
             $addedItems = [];
+            $batchSubtotal = 0;
+
+            // Setiap panggilan "Tambah" membuat batch baru dengan status antrian sendiri,
+            // supaya tampil sebagai kartu terpisah di papan antrian dan bisa diselesaikan
+            // independen dari pesanan awal maupun batch tambahan sebelumnya.
+            $nextBatchNumber = (int) OrderItemBatch::where('order_id', $order->id)
+                ->lockForUpdate()
+                ->max('batch_number') + 1;
+
+            $batch = OrderItemBatch::create([
+                'order_id' => $order->id,
+                'batch_number' => $nextBatchNumber,
+                'queue_status' => 'pending',
+                'drink_queue_status' => 'pending',
+            ]);
 
             foreach ($validated['items'] as $item) {
                 $menuItem = MenuItem::with(['menuIngredients.inventoryItem', 'parent'])->findOrFail($item['menu_item_id']);
@@ -848,6 +901,7 @@ class OrderController extends Controller
                     'note' => $item['note'] ?? null,
                     'is_takeaway' => $item['is_takeaway'] ?? false,
                     'is_addon' => true, // Mark as add-on
+                    'batch_id' => $batch->id,
                     'variant_stock_deduction' => isset($item['variant_stock_deduction']) ? (float)$item['variant_stock_deduction'] : 1.0,
                     'ingredient_deductions' => $menuItem->uses_ingredients ? $ingredientResult['deductions'] : null,
                 ]);
@@ -858,9 +912,11 @@ class OrderController extends Controller
                     $stockItem->save();
                 }
 
-                $total += $finalPrice * $item['quantity'];
+                $lineTotal = $finalPrice * $item['quantity'];
+                $total += $lineTotal;
+                $batchSubtotal += $lineTotal;
                 $cogs += ($menuItem->uses_ingredients ? $ingredientResult['cogs'] : $menuItem->calculateCOGS()) * $item['quantity'];
-                
+
                 $orderItem->load('menuItem');
                 $addedItems[] = $orderItem;
             }
@@ -870,60 +926,72 @@ class OrderController extends Controller
             $order->cogs = $cogs;
             $order->profit = $total - $cogs;
 
-            // Check if queue status needs reset
-            $shouldResetQueue = false;
-            foreach ($addedItems as $addedItem) {
-                $category = strtolower($addedItem->menuItem->category ?? '');
-                if (in_array($category, ['makanan', 'minuman'])) {
-                     $shouldResetQueue = true;
-                     break;
-                }
-            }
+            // Status antrian pesanan awal TIDAK diubah: batch tambahan ini punya status
+            // sendiri, jadi pesanan awal yang sudah selesai tetap selesai.
 
-            if ($shouldResetQueue) {
-                 if ($order->queue_status === 'completed' || $order->queue_status === 'in_progress') {
-                     $order->queue_status = 'pending';
-                 }
-            }
-
-            // Adjust Payment Status
-            if ($order->payment_status === 'paid') {
-                 // Because they already received their change_amount previously, we bake it into paid_amount
-                 // so the store only formally holds the exact original bill amount.
-                 if ((float)$order->change_amount > 0) {
-                     $order->paid_amount = (float)$order->paid_amount - (float)$order->change_amount;
-                     $order->change_amount = 0;
-                 }
-                 
-                 $effectivePaid = (float)$order->paid_amount + (float)$order->second_paid_amount;
-                 
-                 if ($effectivePaid < $total) {
-                     // Total increased beyond what was paid -> Pending (Must pay difference)
-                     $order->payment_status = 'pending'; 
-                 } else {
-                     // Still covered, update change
-                     $order->change_amount = $effectivePaid - $total;
-                 }
-            } else if ($order->payment_status === 'pending') {
-                 // If it's already pending, we shouldn't zero out everything blindly unless needed,
-                 // but if there IS a change_amount (unlikely if pending), we'd bake it.
-                 if ((float)$order->change_amount > 0) {
-                     $order->paid_amount = (float)$order->paid_amount - (float)$order->change_amount;
-                     $order->change_amount = 0;
-                 }
-            }
+            // Pembayaran tambahan berdiri sendiri (BUKAN split bill): tagihannya disimpan
+            // di batch dan dibayar terpisah, sehingga pembayaran pesanan awal yang sudah
+            // lunas tidak diutak-atik dan metode bayar tiap tambahan bisa berbeda.
+            $batch->subtotal = $batchSubtotal;
+            $batch->save();
 
             $order->save();
             DB::commit();
 
             return response()->json([
-                'order' => $order->load(['items.menuItem', 'user', 'store']),
-                'added_items' => $addedItems
+                'order' => $order->load(['items.menuItem', 'user', 'store', 'batches']),
+                'added_items' => $addedItems,
+                'batch' => $batch,
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => 'Failed to add items to order', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Bayar satu batch tambahan secara terpisah (bukan split bill dari tagihan awal).
+     * Tiap batch boleh memakai metode pembayaran yang berbeda.
+     */
+    public function payBatch(Request $request, OrderItemBatch $batch)
+    {
+        $order = $batch->order;
+
+        if ($request->user()->isKasir() && $order->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'payment_method' => 'required|in:cash,card,qris',
+            'paid_amount' => 'nullable|numeric|min:0',
+        ]);
+
+        if ($batch->payment_status === 'paid') {
+            return response()->json(['message' => 'Tambahan ini sudah dibayar'], 422);
+        }
+
+        $subtotal = (float) $batch->subtotal;
+        $paid = isset($validated['paid_amount']) ? (float) $validated['paid_amount'] : $subtotal;
+
+        // Non-tunai selalu pas sejumlah tagihan; tunai boleh lebih (ada kembalian).
+        if ($validated['payment_method'] !== 'cash') {
+            $paid = $subtotal;
+        } elseif ($paid < $subtotal) {
+            return response()->json(['message' => 'Uang yang dibayar kurang dari tagihan tambahan'], 422);
+        }
+
+        $batch->payment_method = $validated['payment_method'];
+        $batch->payment_status = 'paid';
+        $batch->paid_amount = $paid;
+        $batch->change_amount = $paid - $subtotal;
+        $batch->paid_at = now();
+        $batch->save();
+
+        return response()->json([
+            'message' => 'Pembayaran tambahan berhasil',
+            'batch' => $batch->fresh(),
+            'order' => $order->load(['items.menuItem', 'user', 'store', 'batches']),
+        ]);
     }
 
     /**

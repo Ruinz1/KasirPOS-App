@@ -83,6 +83,15 @@ class Order extends Model
     }
 
     /**
+     * Get addon batches (tambahan pesanan setelah pesanan awal) — masing-masing
+     * punya status antrian (queue_status/drink_queue_status/hold) independen.
+     */
+    public function batches(): HasMany
+    {
+        return $this->hasMany(OrderItemBatch::class);
+    }
+
+    /**
      * Get the table assigned to this order
      */
     public function table(): BelongsTo

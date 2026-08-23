@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 use App\Traits\BelongsToStore;
+use App\Models\OrderItemBatch;
 
 class CashierShift extends Model
 {
@@ -99,30 +100,43 @@ class CashierShift extends Model
         $totalTransactions = $orders->count();
         $totalRevenue = $orders->sum('total');
 
+        // Tagihan tambahan dibayar terpisah dengan metodenya sendiri, jadi nilainya
+        // dikeluarkan dari total order agar tidak terhitung dua kali di metode induk.
+        $batches = OrderItemBatch::whereIn('order_id', $orders->pluck('id'))->get();
+        $batchSubtotalByOrder = $batches->groupBy('order_id')->map(fn ($rows) => $rows->sum('subtotal'));
+        $orderBaseTotal = fn ($order) => (float) $order->total
+            - (float) ($batchSubtotalByOrder[$order->id] ?? 0);
+
+        $paidBatches = $batches->where('payment_status', 'paid');
+        $batchSalesBy = fn ($method) => $paidBatches->where('payment_method', $method)->sum('subtotal');
+
         // Cash sales: orders paid with cash (primary payment method)
         $cashOrders = $orders->where('payment_method', 'cash');
-        $cashSales = $cashOrders->sum('total');
+        $cashSales = $cashOrders->sum($orderBaseTotal);
 
         // Also include cash portion from split payments (second_payment_method = cash)
         $splitCashOrders = $orders->where('second_payment_method', 'cash');
         $splitCashSales = $splitCashOrders->sum('second_paid_amount');
-        $cashSales += $splitCashSales;
+        $cashSales += $splitCashSales + $batchSalesBy('cash');
 
-        // Cash change: kembalian dari pembayaran cash
-        $cashChange = $cashOrders->sum('change_amount');
+        // Cash change: kembalian dari pembayaran cash (order induk + tambahan tunai)
+        $cashChange = $cashOrders->sum('change_amount')
+            + $paidBatches->where('payment_method', 'cash')->sum('change_amount');
 
         // QRIS sales
-        $qrisSales = $orders->where('payment_method', 'qris')->sum('total');
+        $qrisSales = $orders->where('payment_method', 'qris')->sum($orderBaseTotal);
         $splitQrisSales = $orders->where('second_payment_method', 'qris')->sum('second_paid_amount');
-        $qrisSales += $splitQrisSales;
+        $qrisSales += $splitQrisSales + $batchSalesBy('qris');
 
         // Card sales
-        $cardSales = $orders->where('payment_method', 'card')->sum('total');
+        $cardSales = $orders->where('payment_method', 'card')->sum($orderBaseTotal);
         $splitCardSales = $orders->where('second_payment_method', 'card')->sum('second_paid_amount');
-        $cardSales += $splitCardSales;
+        $cardSales += $splitCardSales + $batchSalesBy('card');
 
         // Paylater sales (payment_method is null or payment_status is pending)
-        $paylaterSales = $orders->whereNull('payment_method')->sum('total');
+        // Paylater: order induk belum dibayar + tagihan tambahan yang belum dibayar
+        $paylaterSales = $orders->whereNull('payment_method')->sum($orderBaseTotal)
+            + $batches->where('payment_status', 'pending')->sum('subtotal');
 
         // Daily Shopping (belanja) expenses associated with this shift
         $shoppingExpenses = DailyShopping::where('cashier_shift_id', $this->id)

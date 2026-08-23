@@ -11,6 +11,8 @@ import { ClipboardList, CheckCircle2, Clock, Package, Undo2, Utensils, Coffee, P
 import { MainLayout } from "@/components/layout/MainLayout";
 import { StatCardsSkeleton, CardGridSkeleton } from "@/components/skeletons";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
+import { PayBatchDialog } from "@/components/PayBatchDialog";
+import { BatchReceipt, BatchReceiptData } from "@/components/BatchReceipt";
 import { Link } from "react-router-dom";
 import {
     Dialog,
@@ -20,6 +22,14 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { useOrderElapsed, formatElapsed, getElapsedColorClass, isUrgent, isWarning } from "@/hooks/useOrderElapsed";
+import {
+    QueueCard,
+    QueueBatch,
+    flattenOrdersToCards,
+    sortCardsGrouped,
+    shouldHideCard,
+    cardStatusEndpoint,
+} from "@/hooks/useQueueBoard";
 
 interface OrderItem {
     id: number;
@@ -66,6 +76,7 @@ interface QueueOrder {
         table_number: string;
         capacity: number;
     } | null;
+    batches?: QueueBatch[];
 }
 
 interface QueueStatistics {
@@ -94,6 +105,9 @@ const formatItemNote = (noteText: string | null | undefined, menuName: string | 
     return noteText;
 };
 
+const formatRupiah = (n: number) =>
+    new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
+
 const isDrinkItem = (item: OrderItem) => {
     const cat = (item.menu_item?.category || "").toLowerCase();
     return DRINK_CATEGORIES.includes(cat);
@@ -121,7 +135,7 @@ const QueueTimer = ({ createdAt, active }: { createdAt: string; active: boolean 
 };
 
 const QueuePage = () => {
-    const [orders, setOrders] = useState<QueueOrder[]>([]);
+    const [cards, setCards] = useState<QueueCard<QueueOrder>[]>([]);
     const [statistics, setStatistics] = useState<QueueStatistics>({
         pending: 0,
         in_progress: 0,
@@ -136,14 +150,26 @@ const QueuePage = () => {
     const { canEdit, hasAnyPosition } = useAuth();
     // Hold/lanjutkan pesanan: admin & owner, atau jabatan dapur/manajemen (mis. Kitchen Assistant)
     const canHold = canEdit() || hasAnyPosition(HOLD_QUEUE_POSITIONS);
+    const foodCards = cards.filter(c => c.items.some(isFoodItem));
+    const drinkCards = cards.filter(c => c.items.some(isDrinkItem));
     const prevOrdersRef = useRef<QueueOrder[]>([]);
+    const prevCardKeysRef = useRef<string[]>([]);
     const [editingOrder, setEditingOrder] = useState<QueueOrder | null>(null);
     const [showEditDialog, setShowEditDialog] = useState(false);
     // Hold terpisah untuk makanan & minuman — hold makanan TIDAK menahan minuman, dan sebaliknya
-    const [holdTarget, setHoldTarget] = useState<{ order: QueueOrder; type: "food" | "drink" } | null>(null);
+    const [holdTarget, setHoldTarget] = useState<{ card: QueueCard<QueueOrder>; type: "food" | "drink" } | null>(null);
+    const [payCard, setPayCard] = useState<QueueCard<QueueOrder> | null>(null);
+    const [batchReceipt, setBatchReceipt] = useState<BatchReceiptData | null>(null);
     const [holdReason, setHoldReason] = useState("");
     const [isFullscreen, setIsFullscreen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // Cetak nota tambahan setelah data nota ter-render
+    useEffect(() => {
+        if (!batchReceipt) return;
+        const t = setTimeout(() => window.print(), 300);
+        return () => clearTimeout(t);
+    }, [batchReceipt]);
 
     // ── Fullscreen handler (sama seperti Antrian Makanan/Minuman) ──────────
     const toggleFullscreen = useCallback(() => {
@@ -163,47 +189,6 @@ const QueuePage = () => {
         document.addEventListener("fullscreenchange", onFsChange);
         return () => document.removeEventListener("fullscreenchange", onFsChange);
     }, []);
-
-    // Helper: Apakah order ini harus disembunyikan dari antrian?
-    // Order tersembunyi HANYA jika SEMUA section yang ada sudah selesai:
-    // - Jika punya makanan & minuman → keduanya harus selesai
-    // - Jika hanya makanan → makanan harus selesai (drink_queue_status diabaikan)
-    // - Jika hanya minuman → minuman harus selesai (queue_status diabaikan)
-    const shouldHideOrder = (order: QueueOrder): boolean => {
-        const isReactivated = !!(order.queue_completed_at && order.queue_status !== 'completed');
-
-        // Hitung displayItems persis seperti di render
-        const displayItems = isReactivated
-            ? order.items.filter(i => {
-                if (!i.is_addon) return false;
-                const cat = (i.menu_item?.category || "").toLowerCase();
-                return ["makanan", "minuman"].includes(cat);
-            })
-            : [...order.items].sort((a, b) => a.id - b.id);
-
-        const foodItems = displayItems.filter(isFoodItem);
-        const drinkItems = displayItems.filter(isDrinkItem);
-
-        const hasFoodSection = foodItems.length > 0;
-        const hasDrinkSection = drinkItems.length > 0;
-
-        const foodCompleted = order.queue_status === 'completed';
-        const drinkCompleted = order.drink_queue_status === 'completed';
-
-        if (hasFoodSection && hasDrinkSection) {
-            // Ada keduanya → keduanya harus selesai
-            return foodCompleted && drinkCompleted;
-        } else if (hasFoodSection) {
-            // Hanya ada makanan → makanan harus selesai
-            return foodCompleted;
-        } else if (hasDrinkSection) {
-            // Hanya ada minuman → minuman harus selesai
-            return drinkCompleted;
-        }
-
-        // Tidak ada item terkategorisasi → pakai logika lama (cek food)
-        return foodCompleted;
-    };
 
     // Audio notifikasi: Efek "Ding-Dong" (seperti bel pintu/restoran)
     const playNotificationSound = () => {
@@ -251,14 +236,15 @@ const QueuePage = () => {
             const isDataChanged = JSON.stringify(data) !== JSON.stringify(prevOrdersRef.current);
 
             if (isDataChanged) {
-                const prevIds = new Set(prevOrdersRef.current.map(o => o.id));
-                const newOrdersList = data.filter(o => !prevIds.has(o.id));
-                const isFirstLoad = prevOrdersRef.current.length === 0 && data.length > 0;
+                const incomingCards = flattenOrdersToCards(data).filter(c => !shouldHideCard(c));
+                const prevKeys = new Set(prevCardKeysRef.current);
+                const newOrdersList = incomingCards.filter(c => !prevKeys.has(c.cardKey));
+                const isFirstLoad = prevCardKeysRef.current.length === 0 && incomingCards.length > 0;
 
                 if (newOrdersList.length > 0 || isFirstLoad) {
                     const hasActiveOrders = isFirstLoad
-                        ? data.some(o => o.queue_status !== 'completed')
-                        : newOrdersList.some(o => o.queue_status !== 'completed');
+                        ? incomingCards.some(c => c.queue_status !== 'completed')
+                        : newOrdersList.some(c => c.queue_status !== 'completed');
 
                     if (hasActiveOrders) {
                         playNotificationSound();
@@ -276,15 +262,13 @@ const QueuePage = () => {
                     }
                 }
 
-                const sortedData = [...data]
-                    .filter(order => !shouldHideOrder(order))
-                    .sort((a, b) => {
-                        const statusPriority = { in_progress: 0, pending: 1, hold: 2, completed: 3 };
-                        return statusPriority[a.queue_status] - statusPriority[b.queue_status] || a.id - b.id;
-                    });
+                const nextCards = sortCardsGrouped(
+                    flattenOrdersToCards(data).filter(c => !shouldHideCard(c))
+                );
 
-                setOrders(sortedData);
+                setCards(nextCards);
                 prevOrdersRef.current = data;
+                prevCardKeysRef.current = nextCards.map(c => c.cardKey);
                 setLastUpdate(new Date());
             }
 
@@ -354,45 +338,19 @@ const QueuePage = () => {
     };
 
     // Update status antrian MAKANAN
-    const handleFoodStatusChange = async (orderId: number, completed: boolean) => {
+    const handleFoodStatusChange = async (card: QueueCard<QueueOrder>, completed: boolean) => {
         try {
-            const newStatus = completed ? "completed" : "pending";
-
-            if (completed) {
-                const order = orders.find(o => o.id === orderId);
-                if (order && order.customer_name) {
-                    // TTS hanya untuk makanan
-                    speakOrderCompleted(order.customer_name, order);
-                }
+            if (completed && card.order.customer_name) {
+                speakOrderCompleted(card.order.customer_name, card.order);
             }
 
-            const response = await api.put(`/queue/${orderId}/status`, { queue_status: newStatus });
-
-            // Cek apakah order sekarang harus disembunyikan dari antrian
-            if (completed) {
-                const updatedOrder = response.data?.order as QueueOrder | undefined;
-                if (updatedOrder) {
-                    const hide = shouldHideOrder(updatedOrder);
-                    if (hide) {
-                        // Hapus dari state DAN update prevOrdersRef agar interval tidak mengembalikannya
-                        setOrders(prev => prev.filter(o => o.id !== orderId));
-                        prevOrdersRef.current = prevOrdersRef.current.filter(o => o.id !== orderId);
-                        toast({
-                            title: "✅ Pesanan Selesai!",
-                            description: "Semua item selesai, dikeluarkan dari antrian.",
-                            className: "bg-green-600 text-white border-none shadow-lg",
-                        });
-                        fetchStatistics();
-                        return;
-                    }
-                }
-            }
+            await api.put(cardStatusEndpoint(card, "food"), {
+                queue_status: completed ? "completed" : "pending",
+            });
 
             toast({
                 title: completed ? "✅ Makanan Selesai" : "↩ Makanan Dikembalikan",
-                description: completed
-                    ? "Makanan telah selesai dibuat!"
-                    : "Dikembalikan ke antrian",
+                description: completed ? "Makanan telah selesai dibuat!" : "Dikembalikan ke antrian",
                 className: completed ? "bg-orange-600 text-white border-none" : "",
             });
 
@@ -409,45 +367,16 @@ const QueuePage = () => {
     };
 
     // Update status antrian MINUMAN (tanpa TTS, tanpa notifikasi suara)
-    const handleDrinkStatusChange = async (orderId: number, completed: boolean) => {
+    const handleDrinkStatusChange = async (card: QueueCard<QueueOrder>, completed: boolean) => {
         try {
-            const newStatus = completed ? "completed" : "pending";
-            const response = await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: newStatus });
+            await api.put(cardStatusEndpoint(card, "drink"), {
+                drink_queue_status: completed ? "completed" : "pending",
+            });
 
-            if (completed) {
-                const updatedOrder = response.data?.order as QueueOrder | undefined;
-                const order = orders.find(o => o.id === orderId);
-                const isReactivated = !!(order?.queue_completed_at && order?.queue_status !== 'completed');
-
-                // Buat objek order dengan drink_queue_status = 'completed' untuk cek
-                const orderToCheck = updatedOrder ?? (order ? { ...order, drink_queue_status: 'completed' as const } : null);
-                const hide = orderToCheck ? shouldHideOrder(orderToCheck) : false;
-
-                if (hide) {
-                    // Hapus dari state DAN update prevOrdersRef agar interval tidak mengembalikannya
-                    setOrders(prev => prev.filter(o => o.id !== orderId));
-                    prevOrdersRef.current = prevOrdersRef.current.filter(o => o.id !== orderId);
-                    toast({
-                        title: "✅ Selesai!",
-                        description: isReactivated
-                            ? "Tambahan selesai, dikeluarkan dari antrian."
-                            : "Pesanan hanya minuman, dikeluarkan dari antrian.",
-                        className: "bg-green-600 text-white border-none shadow-lg",
-                    });
-                    fetchStatistics();
-                    return;
-                } else {
-                    toast({
-                        title: "☕ Minuman Selesai",
-                        description: "Minuman telah selesai dibuat! Menunggu makanan selesai.",
-                    });
-                }
-            } else {
-                toast({
-                    title: "↩ Minuman Dikembalikan",
-                    description: "Status minuman dikembalikan ke pending",
-                });
-            }
+            toast({
+                title: completed ? "☕ Minuman Selesai" : "↩ Minuman Dikembalikan",
+                description: completed ? "Minuman telah selesai dibuat!" : "Status minuman dikembalikan ke pending",
+            });
 
             fetchQueue();
             fetchStatistics();
@@ -465,14 +394,14 @@ const QueuePage = () => {
     const handleHoldSubmit = async () => {
         if (!holdTarget) return;
         try {
-            if (holdTarget.type === "food") {
-                await api.put(`/queue/${holdTarget.order.id}/status`, { queue_status: "hold", hold_reason: holdReason });
-            } else {
-                await api.put(`/queue/${holdTarget.order.id}/drink-status`, { drink_queue_status: "hold", hold_reason: holdReason });
-            }
+            const endpoint = cardStatusEndpoint(holdTarget.card, holdTarget.type);
+            const payload = holdTarget.type === "food"
+                ? { queue_status: "hold", hold_reason: holdReason }
+                : { drink_queue_status: "hold", hold_reason: holdReason };
+            await api.put(endpoint, payload);
             toast({
                 title: "⏸ Pesanan Ditahan",
-                description: `${holdTarget.type === "food" ? "Makanan" : "Minuman"} #${holdTarget.order.daily_number} ditahan${holdReason ? `: ${holdReason}` : ""}`,
+                description: `${holdTarget.type === "food" ? "Makanan" : "Minuman"} #${holdTarget.card.order.daily_number} ditahan${holdReason ? `: ${holdReason}` : ""}`,
                 className: "bg-yellow-600 text-white border-none",
             });
             setHoldTarget(null);
@@ -490,13 +419,12 @@ const QueuePage = () => {
     };
 
     // Lanjutkan pesanan dari hold → pending
-    const handleResume = async (orderId: number, type: "food" | "drink") => {
+    const handleResume = async (card: QueueCard<QueueOrder>, type: "food" | "drink") => {
         try {
-            if (type === "food") {
-                await api.put(`/queue/${orderId}/status`, { queue_status: "pending" });
-            } else {
-                await api.put(`/queue/${orderId}/drink-status`, { drink_queue_status: "pending" });
-            }
+            const payload = type === "food"
+                ? { queue_status: "pending" }
+                : { drink_queue_status: "pending" };
+            await api.put(cardStatusEndpoint(card, type), payload);
             toast({
                 title: "▶ Pesanan Dilanjutkan",
                 description: `${type === "food" ? "Makanan" : "Minuman"} kembali ke antrian`,
@@ -726,7 +654,7 @@ const QueuePage = () => {
                 )}
 
                 {/* Queue List - Split Panel: Makanan & Minuman */}
-                {orders.length === 0 ? (
+                {cards.length === 0 ? (
                     <Card>
                         <CardContent className="py-12">
                             <div className="text-center">
@@ -743,23 +671,11 @@ const QueuePage = () => {
                                 <Utensils className="h-5 w-5" />
                                 <h2 className="text-lg font-bold tracking-wide">ANTRIAN MAKANAN</h2>
                                 <span className="ml-auto bg-white/20 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                                    {orders.filter(o => {
-                                        const isReactivated = !!(o.queue_completed_at && o.queue_status !== 'completed');
-                                        const displayItems = isReactivated
-                                            ? o.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                            : [...o.items].sort((a,b) => a.id - b.id);
-                                        return displayItems.filter(isFoodItem).length > 0;
-                                    }).length} pesanan
+                                    {foodCards.length} pesanan
                                 </span>
                             </div>
 
-                            {orders.filter(o => {
-                                const isReactivated = !!(o.queue_completed_at && o.queue_status !== 'completed');
-                                const displayItems = isReactivated
-                                    ? o.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                    : [...o.items].sort((a,b) => a.id - b.id);
-                                return displayItems.filter(isFoodItem).length > 0;
-                            }).length === 0 ? (
+                            {foodCards.length === 0 ? (
                                 <Card className="border-dashed border-orange-300">
                                     <CardContent className="py-10 text-center">
                                         <Utensils className="h-8 w-8 text-orange-300 mx-auto mb-2" />
@@ -768,23 +684,15 @@ const QueuePage = () => {
                                 </Card>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                                    {orders.filter(o => {
-                                        const isReactivated = !!(o.queue_completed_at && o.queue_status !== 'completed');
-                                        const displayItems = isReactivated
-                                            ? o.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                            : [...o.items].sort((a,b) => a.id - b.id);
-                                        return displayItems.filter(isFoodItem).length > 0;
-                                    }).map((order) => {
-                                        const isReactivated = !!(order.queue_completed_at && order.queue_status !== 'completed');
-                                        const displayItems = isReactivated
-                                            ? order.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                            : [...order.items].sort((a,b) => a.id - b.id);
-                                        const foodItems = displayItems.filter(isFoodItem);
-                                        const hasVisibleAddons = foodItems.some(i => i.is_addon);
-                                        const foodCompleted = order.queue_status === 'completed';
-                                        const foodHold = order.queue_status === 'hold';
+                                    {foodCards.map((card) => {
+                                        const order = card.order;
+                                        const isBatchCard = card.kind === 'batch';
+                                        const foodItems = card.items.filter(isFoodItem);
+                                        const hasVisibleAddons = isBatchCard || foodItems.some(i => i.is_addon);
+                                        const foodCompleted = card.queue_status === 'completed';
+                                        const foodHold = card.queue_status === 'hold';
                                         return (
-                                            <Card key={`food-${order.id}`} className={`border-2 hover:shadow-lg transition-all ${
+                                            <Card key={card.cardKey} className={`border-2 hover:shadow-lg transition-all ${
                                                 foodCompleted
                                                     ? 'border-green-500 bg-green-50/50 dark:bg-green-950/10 opacity-75'
                                                     : foodHold
@@ -799,7 +707,18 @@ const QueuePage = () => {
                                                     {hasVisibleAddons && !foodCompleted && (
                                                         <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded mb-3 font-bold border border-purple-200 dark:border-purple-800 flex items-center gap-2 animate-pulse">
                                                             <span className="text-lg">🔔</span>
-                                                            <div>PESANAN TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru ditambahkan</div></div>
+                                                            <div>{isBatchCard ? card.label.toUpperCase() : "PESANAN TAMBAHAN"}<div className="font-normal text-[10px] opacity-90">{isBatchCard ? "Antrian terpisah" : "Ada item baru ditambahkan"}</div></div>
+                                                        </div>
+                                                    )}
+                                                    {isBatchCard && card.batch && (
+                                                        <div className={`text-xs p-2 rounded mb-3 border flex items-center justify-between gap-2 ${card.batch.payment_status === "paid" ? "bg-green-50 dark:bg-green-950/20 border-green-300 text-green-700 dark:text-green-300" : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 text-amber-800 dark:text-amber-300"}`}>
+                                                            <div>
+                                                                <span className="font-bold">{formatRupiah(Number(card.batch.subtotal))}</span>
+                                                                <div className="text-[10px] opacity-90">{card.batch.payment_status === "paid" ? `Lunas · ${(card.batch.payment_method || "").toUpperCase()}` : "Belum dibayar"}</div>
+                                                            </div>
+                                                            {card.batch.payment_status !== "paid" && (
+                                                                <Button size="sm" className="h-7 text-xs bg-amber-500 hover:bg-amber-600 text-white shrink-0" onClick={() => setPayCard(card)}>Bayar</Button>
+                                                            )}
                                                         </div>
                                                     )}
                                                     <div className="flex items-start justify-between mb-3">
@@ -810,19 +729,19 @@ const QueuePage = () => {
                                                                     <Badge variant={order.order_type === 'takeaway' ? 'destructive' : 'secondary'} className="text-[10px] px-1.5 py-0.5 h-fit w-fit">
                                                                         {order.order_type === 'takeaway' ? 'Dibungkus' : 'Makan Sini'}
                                                                     </Badge>
-                                                                    {hasVisibleAddons && <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-warning text-warning font-bold bg-warning/10 animate-pulse">TAMBAHAN +</Badge>}
+                                                                    {hasVisibleAddons && <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-warning text-warning font-bold bg-warning/10 animate-pulse">{isBatchCard ? card.label.toUpperCase() : "TAMBAHAN +"}</Badge>}
                                                                 </div>
                                                             </div>
                                                             <h3 className="font-semibold text-sm truncate" title={order.customer_name || 'Pelanggan'}>{order.customer_name || 'Pelanggan'}</h3>
                                                             {order.table && <div className="flex items-center gap-1 mt-1"><Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-primary text-primary font-bold bg-primary/10">🪑 Meja {order.table.table_number}</Badge></div>}
                                                             <p className="text-xs text-muted-foreground">{formatTime(order.created_at)}</p>
                                                         </div>
-                                                        <QueueTimer createdAt={order.created_at} active={!foodCompleted && !foodHold} />
+                                                        <QueueTimer createdAt={card.cardCreatedAt} active={!foodCompleted && !foodHold} />
                                                     </div>
                                                     {/* Alasan hold makanan */}
-                                                    {foodHold && order.hold_reason && (
+                                                    {foodHold && card.hold_reason && (
                                                         <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-xs p-2 rounded mb-2 font-medium border border-red-300 dark:border-red-700">
-                                                            <span className="font-bold">⏸ Alasan Hold:</span> {order.hold_reason}
+                                                            <span className="font-bold">⏸ Alasan Hold:</span> {card.hold_reason}
                                                         </div>
                                                     )}
                                                     {/* Daftar Makanan */}
@@ -839,27 +758,27 @@ const QueuePage = () => {
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
                                                                     {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
                                                                     {item.is_takeaway && <span className="text-destructive font-semibold ml-1">(Bungkus)</span>}
-                                                                    {item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
+                                                                    {!isBatchCard && item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
                                                                     {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
                                                                 </div>
                                                             ))}
                                                         </div>
                                                         <div className="px-3 pb-2">
                                                             {foodCompleted ? (
-                                                                <Button size="sm" variant="ghost" className="w-full h-7 text-xs text-green-700 hover:text-orange-700 hover:bg-orange-100" onClick={() => handleFoodStatusChange(order.id, false)}>
+                                                                <Button size="sm" variant="ghost" className="w-full h-7 text-xs text-green-700 hover:text-orange-700 hover:bg-orange-100" onClick={() => handleFoodStatusChange(card, false)}>
                                                                     <Undo2 className="h-3 w-3 mr-1" /> Batalkan Selesai
                                                                 </Button>
                                                             ) : (
                                                                 <div className="flex flex-col gap-1">
-                                                                    <Button size="sm" className="w-full h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleFoodStatusChange(order.id, true)}>
+                                                                    <Button size="sm" className="w-full h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleFoodStatusChange(card, true)}>
                                                                         <CheckCircle2 className="h-3 w-3 mr-1" /> Makanan Selesai
                                                                     </Button>
                                                                     {canHold && (foodHold ? (
-                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => handleResume(order.id, "food")}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => handleResume(card, "food")}>
                                                                             <RefreshCw className="h-3 w-3 mr-1" /> Lanjutkan Makanan
                                                                         </Button>
                                                                     ) : (
-                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => { setHoldTarget({ order, type: "food" }); setHoldReason(""); }}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => { setHoldTarget({ card, type: "food" }); setHoldReason(""); }}>
                                                                             <Clock className="h-3 w-3 mr-1" /> Tahan Makanan
                                                                         </Button>
                                                                     ))}
@@ -904,23 +823,11 @@ const QueuePage = () => {
                                 <Coffee className="h-5 w-5" />
                                 <h2 className="text-lg font-bold tracking-wide">ANTRIAN MINUMAN</h2>
                                 <span className="ml-auto bg-white/20 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                                    {orders.filter(o => {
-                                        const isReactivated = !!(o.queue_completed_at && o.queue_status !== 'completed');
-                                        const displayItems = isReactivated
-                                            ? o.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                            : [...o.items].sort((a,b) => a.id - b.id);
-                                        return displayItems.filter(isDrinkItem).length > 0;
-                                    }).length} pesanan
+                                    {drinkCards.length} pesanan
                                 </span>
                             </div>
 
-                            {orders.filter(o => {
-                                const isReactivated = !!(o.queue_completed_at && o.queue_status !== 'completed');
-                                const displayItems = isReactivated
-                                    ? o.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                    : [...o.items].sort((a,b) => a.id - b.id);
-                                return displayItems.filter(isDrinkItem).length > 0;
-                            }).length === 0 ? (
+                            {drinkCards.length === 0 ? (
                                 <Card className="border-dashed border-blue-300">
                                     <CardContent className="py-10 text-center">
                                         <Coffee className="h-8 w-8 text-blue-300 mx-auto mb-2" />
@@ -929,23 +836,15 @@ const QueuePage = () => {
                                 </Card>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                                    {orders.filter(o => {
-                                        const isReactivated = !!(o.queue_completed_at && o.queue_status !== 'completed');
-                                        const displayItems = isReactivated
-                                            ? o.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                            : [...o.items].sort((a,b) => a.id - b.id);
-                                        return displayItems.filter(isDrinkItem).length > 0;
-                                    }).map((order) => {
-                                        const isReactivated = !!(order.queue_completed_at && order.queue_status !== 'completed');
-                                        const displayItems = isReactivated
-                                            ? order.items.filter(i => { if (!i.is_addon) return false; const cat = (i.menu_item?.category || '').toLowerCase(); return ['makanan','minuman'].includes(cat); })
-                                            : [...order.items].sort((a,b) => a.id - b.id);
-                                        const drinkItems = displayItems.filter(isDrinkItem);
-                                        const hasVisibleAddons = drinkItems.some(i => i.is_addon);
-                                        const drinkCompleted = order.drink_queue_status === 'completed';
-                                        const drinkHold = order.drink_queue_status === 'hold';
+                                    {drinkCards.map((card) => {
+                                        const order = card.order;
+                                        const isBatchCard = card.kind === 'batch';
+                                        const drinkItems = card.items.filter(isDrinkItem);
+                                        const hasVisibleAddons = isBatchCard || drinkItems.some(i => i.is_addon);
+                                        const drinkCompleted = card.drink_queue_status === 'completed';
+                                        const drinkHold = card.drink_queue_status === 'hold';
                                         return (
-                                            <Card key={`drink-${order.id}`} className={`border-2 hover:shadow-lg transition-all ${
+                                            <Card key={card.cardKey} className={`border-2 hover:shadow-lg transition-all ${
                                                 drinkCompleted
                                                     ? 'border-green-500 bg-green-50/50 dark:bg-green-950/10 opacity-75'
                                                     : drinkHold
@@ -958,7 +857,18 @@ const QueuePage = () => {
                                                     {hasVisibleAddons && !drinkCompleted && (
                                                         <div className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs p-2 rounded mb-3 font-bold border border-purple-200 dark:border-purple-800 flex items-center gap-2 animate-pulse">
                                                             <span className="text-lg">🔔</span>
-                                                            <div>PESANAN TAMBAHAN<div className="font-normal text-[10px] opacity-90">Ada item baru ditambahkan</div></div>
+                                                            <div>{isBatchCard ? card.label.toUpperCase() : "PESANAN TAMBAHAN"}<div className="font-normal text-[10px] opacity-90">{isBatchCard ? "Antrian terpisah" : "Ada item baru ditambahkan"}</div></div>
+                                                        </div>
+                                                    )}
+                                                    {isBatchCard && card.batch && (
+                                                        <div className={`text-xs p-2 rounded mb-3 border flex items-center justify-between gap-2 ${card.batch.payment_status === "paid" ? "bg-green-50 dark:bg-green-950/20 border-green-300 text-green-700 dark:text-green-300" : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 text-amber-800 dark:text-amber-300"}`}>
+                                                            <div>
+                                                                <span className="font-bold">{formatRupiah(Number(card.batch.subtotal))}</span>
+                                                                <div className="text-[10px] opacity-90">{card.batch.payment_status === "paid" ? `Lunas · ${(card.batch.payment_method || "").toUpperCase()}` : "Belum dibayar"}</div>
+                                                            </div>
+                                                            {card.batch.payment_status !== "paid" && (
+                                                                <Button size="sm" className="h-7 text-xs bg-amber-500 hover:bg-amber-600 text-white shrink-0" onClick={() => setPayCard(card)}>Bayar</Button>
+                                                            )}
                                                         </div>
                                                     )}
                                                     <div className="flex items-start justify-between mb-3">
@@ -969,19 +879,19 @@ const QueuePage = () => {
                                                                     <Badge variant={order.order_type === 'takeaway' ? 'destructive' : 'secondary'} className="text-[10px] px-1.5 py-0.5 h-fit w-fit">
                                                                         {order.order_type === 'takeaway' ? 'Dibungkus' : 'Makan Sini'}
                                                                     </Badge>
-                                                                    {hasVisibleAddons && <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-warning text-warning font-bold bg-warning/10 animate-pulse">TAMBAHAN +</Badge>}
+                                                                    {hasVisibleAddons && <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-warning text-warning font-bold bg-warning/10 animate-pulse">{isBatchCard ? card.label.toUpperCase() : "TAMBAHAN +"}</Badge>}
                                                                 </div>
                                                             </div>
                                                             <h3 className="font-semibold text-sm truncate" title={order.customer_name || 'Pelanggan'}>{order.customer_name || 'Pelanggan'}</h3>
                                                             {order.table && <div className="flex items-center gap-1 mt-1"><Badge variant="outline" className="text-[10px] px-1.5 py-0.5 h-fit w-fit border-primary text-primary font-bold bg-primary/10">🪑 Meja {order.table.table_number}</Badge></div>}
                                                             <p className="text-xs text-muted-foreground">{formatTime(order.created_at)}</p>
                                                         </div>
-                                                        <QueueTimer createdAt={order.created_at} active={!drinkCompleted && !drinkHold} />
+                                                        <QueueTimer createdAt={card.cardCreatedAt} active={!drinkCompleted && !drinkHold} />
                                                     </div>
                                                     {/* Alasan hold minuman (terpisah dari makanan) */}
-                                                    {drinkHold && order.drink_hold_reason && (
+                                                    {drinkHold && card.drink_hold_reason && (
                                                         <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-xs p-2 rounded mb-2 font-medium border border-red-300 dark:border-red-700">
-                                                            <span className="font-bold">⏸ Alasan Hold:</span> {order.drink_hold_reason}
+                                                            <span className="font-bold">⏸ Alasan Hold:</span> {card.drink_hold_reason}
                                                         </div>
                                                     )}
                                                     {/* Daftar Minuman */}
@@ -998,27 +908,27 @@ const QueuePage = () => {
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
                                                                     {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
                                                                     {item.is_takeaway && <span className="text-destructive font-semibold ml-1">(Bungkus)</span>}
-                                                                    {item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
+                                                                    {!isBatchCard && item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
                                                                     {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
                                                                 </div>
                                                             ))}
                                                         </div>
                                                         <div className="px-3 pb-2">
                                                             {drinkCompleted ? (
-                                                                <Button size="sm" variant="ghost" className="w-full h-7 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => handleDrinkStatusChange(order.id, false)}>
+                                                                <Button size="sm" variant="ghost" className="w-full h-7 text-xs text-green-700 hover:text-blue-700 hover:bg-blue-100" onClick={() => handleDrinkStatusChange(card, false)}>
                                                                     <Undo2 className="h-3 w-3 mr-1" /> Batalkan Selesai
                                                                 </Button>
                                                             ) : (
                                                                 <div className="flex flex-col gap-1">
-                                                                    <Button size="sm" className="w-full h-7 text-xs bg-blue-500 hover:bg-blue-600 text-white" onClick={() => handleDrinkStatusChange(order.id, true)}>
+                                                                    <Button size="sm" className="w-full h-7 text-xs bg-blue-500 hover:bg-blue-600 text-white" onClick={() => handleDrinkStatusChange(card, true)}>
                                                                         <CheckCircle2 className="h-3 w-3 mr-1" /> Minuman Selesai
                                                                     </Button>
                                                                     {canHold && (drinkHold ? (
-                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => handleResume(order.id, "drink")}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => handleResume(card, "drink")}>
                                                                             <RefreshCw className="h-3 w-3 mr-1" /> Lanjutkan Minuman
                                                                         </Button>
                                                                     ) : (
-                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => { setHoldTarget({ order, type: "drink" }); setHoldReason(""); }}>
+                                                                        <Button size="sm" className="w-full h-7 text-xs bg-red-500 hover:bg-red-600 text-white" onClick={() => { setHoldTarget({ card, type: "drink" }); setHoldReason(""); }}>
                                                                             <Clock className="h-3 w-3 mr-1" /> Tahan Minuman
                                                                         </Button>
                                                                     ))}
@@ -1069,7 +979,7 @@ const QueuePage = () => {
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>
-                            Tahan {holdTarget?.type === "food" ? "Makanan" : "Minuman"} #{holdTarget?.order.daily_number}
+                            Tahan {holdTarget?.type === "food" ? "Makanan" : "Minuman"} #{holdTarget?.card.order.daily_number}
                         </DialogTitle>
                     </DialogHeader>
                     <div className="space-y-2">
@@ -1091,6 +1001,33 @@ const QueuePage = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <BatchReceipt data={batchReceipt} />
+
+            {/* Bayar tambahan terpisah */}
+            <PayBatchDialog
+                batch={payCard?.batch ?? null}
+                label={payCard?.label ?? ""}
+                dailyNumber={payCard?.order.daily_number}
+                customerName={payCard?.order.customer_name}
+                onOpenChange={(open) => { if (!open) setPayCard(null); }}
+                onPaid={(paidBatch) => {
+                    if (payCard) {
+                        setBatchReceipt({
+                            batch: paidBatch,
+                            label: payCard.label,
+                            dailyNumber: payCard.order.daily_number,
+                            customerName: payCard.order.customer_name,
+                            orderType: payCard.order.order_type,
+                            tableNumber: payCard.order.table?.table_number ?? null,
+                            cashierName: payCard.order.user?.name,
+                        });
+                    }
+                    prevOrdersRef.current = [];
+                    fetchQueue();
+                    fetchStatistics();
+                }}
+            />
 
             {/* Edit Order Dialog */}
             <EditQueueOrderDialog

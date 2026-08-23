@@ -35,7 +35,8 @@ export function EditOrderDetailsDialog({ open, onOpenChange, order, onSuccess }:
     const fetchAvailableTables = async () => {
         try {
             const response = await api.get('/tables');
-            setAvailableTables(response.data);
+            const sorted = [...response.data].sort((a: any, b: any) => Number(a.table_number) - Number(b.table_number));
+            setAvailableTables(sorted);
         } catch (error) {
             console.error('Failed to fetch tables:', error);
         }

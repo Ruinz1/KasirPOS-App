@@ -118,7 +118,8 @@ interface Order {
   payment_method: string;
   status?: string;
   payment_status?: 'paid' | 'pending';
-  order_type?: 'dine_in' | 'takeaway';
+  order_type?: 'dine_in' | 'takeaway' | 'delivery';
+  table_id?: number | null;
   paid_amount?: number;
   second_paid_amount?: number;
   change_amount?: number;
@@ -176,12 +177,9 @@ export default function POSPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // Table Management States
-  const [showTableSelection, setShowTableSelection] = useState(false);
   const [availableTables, setAvailableTables] = useState<any[]>([]);
-  const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
-  const [pendingOrderForTable, setPendingOrderForTable] = useState<Order | null>(null);
+  const [selectedTableId, setSelectedTableId] = useState<number | null>(null); // Meja dipilih langsung di form kasir
   const [useTableSystem, setUseTableSystem] = useState(true); // Toggle untuk menggunakan sistem meja atau tidak
-  const [preSelectedTableId, setPreSelectedTableId] = useState<number | null>(null); // Meja yang dipilih sebelum bayar
 
   // Split Bill States
   const [isSplitBill, setIsSplitBill] = useState(false);
@@ -231,6 +229,7 @@ export default function POSPage() {
       setOrderType(order.order_type || 'dine_in');
       setPaymentMethod(order.payment_method || 'cash');
       setPaidAmount(order.paid_amount ? String(order.paid_amount) : '');
+      setSelectedTableId(order.table_id || null);
 
       // Map items — restore variant/kuah, Tipe & bahan opsional dari note
       const cartItems: CartItem[] = order.items.map((item: any) => {
@@ -436,9 +435,11 @@ export default function POSPage() {
       if (isAdmin()) {
         if (selectedStoreId) {
           fetchPendingOrders();
+          fetchAvailableTables();
         }
       } else {
         fetchPendingOrders();
+        fetchAvailableTables();
       }
     }
   }, [user, authLoading, selectedStoreId]);
@@ -460,6 +461,7 @@ export default function POSPage() {
     const fetchLive = () => {
       fetchMenuItems(true); // Silent update
       fetchActiveOrders();
+      fetchAvailableTables();
     };
 
     const intervalId = setInterval(fetchLive, 10000);
@@ -485,49 +487,20 @@ export default function POSPage() {
     }
   };
 
+  // Ambil semua meja (bukan hanya yang available) supaya kasir bisa memilih meja yang
+  // sedang terisi juga — pesanan tambahan di meja yang sama dibuat sebagai nota baru.
   const fetchAvailableTables = async () => {
     try {
-      const params: any = { status: 'available' };
+      const params: any = {};
       if (isAdmin() && selectedStoreId) {
         params.store_id = selectedStoreId;
       }
       const response = await api.get('/tables', { params });
-      setAvailableTables(response.data);
+      const sorted = [...response.data].sort((a: any, b: any) => Number(a.table_number) - Number(b.table_number));
+      setAvailableTables(sorted);
     } catch (error) {
       console.error('Failed to fetch tables:', error);
       toast.error('Gagal memuat data meja');
-    }
-  };
-
-  const handleAssignTable = async () => {
-    if (!selectedTableId || !pendingOrderForTable) {
-      toast.error('Pilih nomor meja terlebih dahulu');
-      return;
-    }
-
-    try {
-      await api.post(`/tables/${selectedTableId}/assign`, {
-        order_id: pendingOrderForTable.id
-      });
-
-      toast.success('Nomor meja berhasil ditetapkan');
-      setShowTableSelection(false);
-      setSelectedTableId(null);
-      setPendingOrderForTable(null);
-
-      // Show receipt after table assignment
-      setShowReceipt(true);
-      setReceiptMode('customer');
-
-      // Auto print
-      setTimeout(() => {
-        printReceipt();
-      }, 500);
-
-      fetchPendingOrders();
-    } catch (error: any) {
-      console.error('Failed to assign table:', error);
-      toast.error(error.response?.data?.message || 'Gagal menetapkan meja');
     }
   };
 
@@ -803,6 +776,7 @@ export default function POSPage() {
     setOrderType('dine_in');
     setPaidAmount('');
     setDeliveryInfo(null);
+    setSelectedTableId(null);
   };
 
   // Helper function to get discounted price
@@ -1084,6 +1058,7 @@ export default function POSPage() {
           payment_method: paymentStatus === 'pending' ? null : paymentMethod,
           payment_status: paymentStatus,
           order_type: orderType,
+          table_id: orderType === 'dine_in' && useTableSystem && selectedTableId ? selectedTableId : null,
           paid_amount: paymentStatus === 'paid' ? (paidAmount ? parseFloat(paidAmount) : null) : null,
           send_points_wa: sendPointsWa,
           items: formatOrderItemsPayload(cart),
@@ -1129,26 +1104,18 @@ export default function POSPage() {
         clearCart();
         setEditingOrderId(null);
 
-        // Refresh pending orders if status is pending or generally to keep sync
+        // Refresh pending orders & status meja (meja yang baru dipilih kini occupied)
         fetchPendingOrders();
+        fetchAvailableTables();
 
-        // For PAID DINE-IN orders with table system enabled, show table selection first
-        if (paymentStatus === 'paid' && orderType === 'dine_in' && useTableSystem) {
-          setPendingOrderForTable(response.data);
-          await fetchAvailableTables();
-          setShowTableSelection(true);
-          toast.info('Pilih nomor meja untuk pesanan ini');
-        } else {
-          // For takeaway, pending orders, or when table system is disabled, show receipt directly
-          setShowReceipt(true);
-          setReceiptMode('customer');
+        setShowReceipt(true);
+        setReceiptMode('customer');
 
-          // Auto print after short delay to allow rendering (only for paid orders)
-          if (paymentStatus === 'paid') {
-            setTimeout(() => {
-              printReceipt();
-            }, 500);
-          }
+        // Auto print after short delay to allow rendering (only for paid orders)
+        if (paymentStatus === 'paid') {
+          setTimeout(() => {
+            printReceipt();
+          }, 500);
         }
       }
     } catch (error: any) {
@@ -2307,6 +2274,28 @@ export default function POSPage() {
                 disabled={isAdmin() && !selectedStoreId}
               />
             )}
+            {/* Pilih Meja - hanya untuk Dine In dengan Sistem Meja aktif */}
+            {orderType === 'dine_in' && useTableSystem && (
+              <Select
+                value={selectedTableId ? String(selectedTableId) : ''}
+                onValueChange={(v) => setSelectedTableId(v ? Number(v) : null)}
+              >
+                <SelectTrigger className="bg-background text-sm">
+                  <SelectValue placeholder="Pilih Meja (opsional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableTables.map((table) => (
+                    <SelectItem key={table.id} value={String(table.id)}>
+                      Meja {table.table_number}
+                      {table.status === 'occupied' ? ' — Terisi (buat nota baru)' : ''}
+                    </SelectItem>
+                  ))}
+                  {availableTables.length === 0 && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">Belum ada meja</div>
+                  )}
+                </SelectContent>
+              </Select>
+            )}
             {/* Delivery Location Picker */}
             {orderType === 'delivery' && (
               <DeliveryLocationPicker
@@ -2716,7 +2705,7 @@ export default function POSPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {useTableSystem
-                            ? 'Pilih nomor meja setelah bayar'
+                            ? 'Pilih nomor meja di bawah'
                             : 'Langsung ke antrian tanpa meja'}
                         </p>
                       </div>
@@ -2732,6 +2721,32 @@ export default function POSPage() {
                       />
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Pilih Meja - hanya untuk Dine In dengan Sistem Meja aktif */}
+              {orderType === 'dine_in' && useTableSystem && (
+                <div className="mb-6">
+                  <p className="text-sm text-muted-foreground mb-2">Nomor Meja</p>
+                  <Select
+                    value={selectedTableId ? String(selectedTableId) : ''}
+                    onValueChange={(v) => setSelectedTableId(v ? Number(v) : null)}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Pilih Meja (opsional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableTables.map((table) => (
+                        <SelectItem key={table.id} value={String(table.id)}>
+                          Meja {table.table_number}
+                          {table.status === 'occupied' ? ' — Terisi (buat nota baru)' : ''}
+                        </SelectItem>
+                      ))}
+                      {availableTables.length === 0 && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">Belum ada meja</div>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
 
@@ -2871,6 +2886,12 @@ export default function POSPage() {
                           {(currentOrder as any).order_type === 'dine_in' ? 'DINE IN' : 'TAKEAWAY'}
                         </p>
                         <p className="font-bold text-md mt-1 truncate">{currentOrder.customer_name || 'Pelanggan'}</p>
+                        {(currentOrder as any).table_id && (() => {
+                          const tbl = availableTables.find((t: any) => t.id === (currentOrder as any).table_id);
+                          return tbl ? (
+                            <p className="font-bold text-lg mt-0.5">MEJA {tbl.table_number}</p>
+                          ) : null;
+                        })()}
                         <div className="text-[10px] mt-1 text-left flex justify-between">
                           <span>{new Date(currentOrder.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
                           <span>Kasir: {user?.name?.split(' ')[0]}</span>
@@ -2963,6 +2984,12 @@ export default function POSPage() {
                         {currentOrder.customer_name && (
                           <div className="mt-0.5 line-clamp-1">Plg: {currentOrder.customer_name}</div>
                         )}
+                        {(currentOrder as any).table_id && (() => {
+                          const tbl = availableTables.find((t: any) => t.id === (currentOrder as any).table_id);
+                          return tbl ? (
+                            <div className="mt-0.5 font-semibold">Meja: {tbl.table_number}</div>
+                          ) : null;
+                        })()}
                         <div className="mt-0.5 font-bold uppercase text-center border-t border-dashed border-black/50 pt-0.5 mt-1">
                           {currentOrder.status === 'cancelled' ? 'BATAL' : (currentOrder.payment_status === 'paid' ? 'LUNAS' : 'BELUM BAYAR')}
                         </div>
@@ -3093,6 +3120,12 @@ export default function POSPage() {
                 {(currentOrder as any).order_type === 'dine_in' ? 'DINE IN' : 'TAKEAWAY'}
               </p>
               <p className="font-bold text-md mt-1 truncate">{currentOrder.customer_name || 'Pelanggan'}</p>
+              {(currentOrder as any).table_id && (() => {
+                const tbl = availableTables.find((t: any) => t.id === (currentOrder as any).table_id);
+                return tbl ? (
+                  <p className="font-bold text-xl mt-0.5">MEJA {tbl.table_number}</p>
+                ) : null;
+              })()}
               <div className="text-[10px] mt-1 text-left flex justify-between">
                 <span>{new Date(currentOrder.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
                 <span>{user?.name?.split(' ')[0]}</span>
@@ -3181,6 +3214,12 @@ export default function POSPage() {
               {currentOrder.customer_name && (
                 <div className="mt-0.5 line-clamp-1">Plg: {currentOrder.customer_name}</div>
               )}
+              {(currentOrder as any).table_id && (() => {
+                const tbl = availableTables.find((t: any) => t.id === (currentOrder as any).table_id);
+                return tbl ? (
+                  <div className="mt-0.5 font-semibold">Meja: {tbl.table_number}</div>
+                ) : null;
+              })()}
               <div className="mt-0.5 font-bold uppercase text-center border-t border-dashed border-black/50 pt-0.5 mt-1">
                 {currentOrder.status === 'cancelled' ? 'BATAL' : (currentOrder.payment_status === 'paid' ? 'LUNAS' : 'BELUM BAYAR')}
               </div>
@@ -3374,93 +3413,6 @@ export default function POSPage() {
         }
        `}</style>
 
-      {/* Table Selection Dialog */}
-      <Dialog open={showTableSelection} onOpenChange={setShowTableSelection}>
-        <DialogContent className="sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">Pilih Nomor Meja</DialogTitle>
-            <p className="text-muted-foreground">
-              Pesanan sudah dibayar. Pilih nomor meja untuk pesanan ini.
-            </p>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {/* Order Summary */}
-            {pendingOrderForTable && (
-              <div className="bg-secondary/30 rounded-lg p-4 border">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-semibold">Pesanan #{pendingOrderForTable.daily_number}</span>
-                  <span className="text-lg font-bold text-primary">
-                    {formatCurrency(pendingOrderForTable.total)}
-                  </span>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {pendingOrderForTable.customer_name || 'Pelanggan Umum'}
-                </div>
-              </div>
-            )}
-
-            {/* Available Tables Grid */}
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 max-h-96 overflow-y-auto">
-              {availableTables.map((table) => (
-                <button
-                  key={table.id}
-                  onClick={() => setSelectedTableId(table.id)}
-                  className={`relative border-4 rounded-xl p-4 transition-all hover:shadow-lg ${selectedTableId === table.id
-                    ? 'bg-primary text-primary-foreground border-primary scale-105'
-                    : 'bg-green-50 dark:bg-green-900/20 border-green-500 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/30'
-                    }`}
-                >
-                  <div className="text-center">
-                    <div className="text-3xl font-black mb-1">{table.table_number}</div>
-                    <div className="text-xs font-medium opacity-75">
-                      {table.capacity} Kursi
-                    </div>
-                  </div>
-                  {selectedTableId === table.id && (
-                    <div className="absolute top-1 right-1">
-                      <div className="bg-white dark:bg-black rounded-full p-1">
-                        <Check className="w-4 h-4 text-primary" />
-                      </div>
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            {availableTables.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                <p>Tidak ada meja tersedia saat ini.</p>
-                <p className="text-sm mt-2">Silakan kosongkan meja terlebih dahulu atau tambah meja baru.</p>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex gap-3 pt-4">
-              <Button
-                onClick={() => {
-                  setShowTableSelection(false);
-                  setSelectedTableId(null);
-                  // Show receipt without table
-                  setShowReceipt(true);
-                  setReceiptMode('customer');
-                  setTimeout(() => printReceipt(), 500);
-                }}
-                className="flex-1 btn-outline"
-              >
-                Lewati (Tanpa Meja)
-              </Button>
-              <Button
-                onClick={handleAssignTable}
-                disabled={!selectedTableId}
-                className="flex-1 btn-primary"
-              >
-                Konfirmasi Meja
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </MainLayout >
   );
 }

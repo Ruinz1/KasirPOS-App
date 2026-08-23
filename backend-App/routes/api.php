@@ -72,6 +72,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/orders/{order}', [OrderController::class, 'update']);
     Route::put('/orders/{order}/items', [OrderController::class, 'updateItems']);
     Route::post('/orders/{order}/items', [OrderController::class, 'addItems']);
+    // Bayar tambahan terpisah (metode bayar bisa beda tiap batch)
+    Route::post('/order-batches/{batch}/pay', [OrderController::class, 'payBatch']);
     Route::post('/orders/{order}/payment-proof', [OrderController::class, 'uploadPaymentProof']);
     Route::put('/orders/{order}/details', [OrderController::class, 'updateOrderDetails']);
     Route::delete('/orders/{order}', [OrderController::class, 'destroy']);
@@ -97,6 +99,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Queue routes
     Route::get('/queue', [QueueController::class, 'index']);
     Route::get('/queue/statistics', [QueueController::class, 'statistics']);
+    // Status per batch tambahan (kartu antrian terpisah) — harus sebelum /queue/{id}/*
+    Route::put('/queue/batch/{batchId}/status', [QueueController::class, 'updateBatchStatus']);
+    Route::put('/queue/batch/{batchId}/drink-status', [QueueController::class, 'updateBatchDrinkStatus']);
     Route::put('/queue/{id}/status', [QueueController::class, 'updateStatus']);
     Route::put('/queue/{id}/drink-status', [QueueController::class, 'updateDrinkStatus']);
     Route::put('/queue/{id}/notes', [QueueController::class, 'updateNotes']);

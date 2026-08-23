@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
+use App\Models\OrderItemBatch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -42,7 +43,7 @@ class QueueController extends Controller
             $storeId = $request->input('store_id');
         }
 
-        $orders = Order::with(['items.menuItem', 'user', 'table'])
+        $orders = Order::with(['items.menuItem', 'user', 'table', 'batches.items.menuItem'])
             ->where('store_id', $storeId)
             ->where('status', 'completed')
             ->where(function ($query) {
@@ -50,10 +51,17 @@ class QueueController extends Controller
                 // 1. queue_status pending atau in_progress
                 // 2. queue_status completed TAPI queue_completed_at masih null
                 //    (berarti makanan selesai tapi minuman belum)
+                // 3. ATAU punya batch tambahan yang belum selesai (kartu terpisah)
                 $query->whereIn('queue_status', ['pending', 'in_progress', 'hold'])
                     ->orWhere(function ($q) {
                         $q->where('queue_status', 'completed')
                             ->whereNull('queue_completed_at');
+                    })
+                    ->orWhereHas('batches', function ($q) {
+                        $q->where(function ($inner) {
+                            $inner->whereIn('queue_status', ['pending', 'in_progress', 'hold'])
+                                ->orWhereIn('drink_queue_status', ['pending', 'hold']);
+                        });
                     });
             })
             ->whereDate('created_at', today()) // Only today's orders
@@ -249,6 +257,119 @@ class QueueController extends Controller
 
 
     /**
+     * Update status makanan untuk SATU batch tambahan (kartu terpisah di antrian).
+     * Independen dari pesanan awal maupun batch tambahan lainnya.
+     */
+    public function updateBatchStatus(Request $request, $batchId)
+    {
+        $request->validate([
+            'queue_status' => 'required|in:pending,in_progress,completed,hold',
+            'hold_reason' => 'nullable|string',
+        ]);
+
+        $batch = OrderItemBatch::with('order')->findOrFail($batchId);
+
+        $user = Auth::user();
+        if ($user->role !== 'admin' && $batch->order->store_id !== $user->store_id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $isHoldAction = $request->queue_status === 'hold';
+        $isResumeAction = $batch->queue_status === 'hold'
+            && in_array($request->queue_status, ['pending', 'in_progress']);
+        if (($isHoldAction || $isResumeAction) && !$this->canHoldQueue($user)) {
+            return response()->json([
+                'message' => 'Jabatan Anda tidak diizinkan menahan/melanjutkan pesanan',
+            ], 403);
+        }
+
+        $batch->queue_status = $request->queue_status;
+        if ($request->has('hold_reason')) {
+            $batch->hold_reason = $request->hold_reason;
+        }
+        if ($request->queue_status !== 'hold') {
+            $batch->hold_reason = null;
+        }
+
+        $this->syncBatchCompletedAt($batch);
+        $batch->save();
+
+        return response()->json([
+            'message' => 'Batch queue status updated successfully',
+            'batch' => $batch->fresh(),
+        ]);
+    }
+
+    /**
+     * Update status minuman untuk SATU batch tambahan.
+     */
+    public function updateBatchDrinkStatus(Request $request, $batchId)
+    {
+        $request->validate([
+            'drink_queue_status' => 'required|in:pending,completed,hold',
+            'hold_reason' => 'nullable|string',
+        ]);
+
+        $batch = OrderItemBatch::with('order')->findOrFail($batchId);
+
+        $user = Auth::user();
+        if ($user->role !== 'admin' && $batch->order->store_id !== $user->store_id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $isHoldAction = $request->drink_queue_status === 'hold';
+        $isResumeAction = $batch->drink_queue_status === 'hold'
+            && $request->drink_queue_status === 'pending';
+        if (($isHoldAction || $isResumeAction) && !$this->canHoldQueue($user)) {
+            return response()->json([
+                'message' => 'Jabatan Anda tidak diizinkan menahan/melanjutkan pesanan',
+            ], 403);
+        }
+
+        $batch->drink_queue_status = $request->drink_queue_status;
+        if ($request->has('hold_reason')) {
+            $batch->drink_hold_reason = $request->hold_reason;
+        }
+        if ($request->drink_queue_status !== 'hold') {
+            $batch->drink_hold_reason = null;
+        }
+
+        $this->syncBatchCompletedAt($batch);
+        $batch->save();
+
+        return response()->json([
+            'message' => 'Batch drink queue status updated successfully',
+            'batch' => $batch->fresh(),
+        ]);
+    }
+
+    /**
+     * Batch dianggap benar-benar selesai hanya jika semua section yang dimilikinya
+     * (makanan &/ minuman) sudah selesai.
+     */
+    private function syncBatchCompletedAt(OrderItemBatch $batch): void
+    {
+        $drinkCategories = ['minuman', 'drink', 'beverage', 'drinks'];
+        $items = $batch->items()->with('menuItem')->get();
+
+        $hasFood = $items->contains(function ($item) use ($drinkCategories) {
+            return !in_array(strtolower($item->menuItem?->category ?? ''), $drinkCategories);
+        });
+        $hasDrink = $items->contains(function ($item) use ($drinkCategories) {
+            return in_array(strtolower($item->menuItem?->category ?? ''), $drinkCategories);
+        });
+
+        $foodDone = $batch->queue_status === 'completed';
+        $drinkDone = $batch->drink_queue_status === 'completed';
+
+        $allDone = $hasFood && $hasDrink
+            ? ($foodDone && $drinkDone)
+            : ($hasDrink ? $drinkDone : $foodDone);
+
+        $batch->queue_completed_at = $allDone ? now() : null;
+    }
+
+    /**
      * Update order notes
      */
     public function updateNotes(Request $request, $id)
@@ -311,6 +432,28 @@ class QueueController extends Controller
             ->where('status', 'completed')
             ->where('queue_status', 'completed')
             ->whereNotNull('queue_completed_at') // Benar-benar selesai (makanan + minuman)
+            ->whereDate('queue_completed_at', today())
+            ->count();
+
+        // Batch tambahan dihitung sebagai unit kerja tersendiri (satu kartu = satu unit).
+        $batchQuery = OrderItemBatch::whereHas('order', function ($q) use ($storeId) {
+            $q->where('store_id', $storeId)
+                ->where('status', 'completed')
+                ->whereDate('created_at', today());
+        });
+
+        $pending += (clone $batchQuery)->whereIn('queue_status', ['pending', 'hold'])->count();
+
+        $inProgress += (clone $batchQuery)->where(function ($q) {
+            $q->where('queue_status', 'in_progress')
+                ->orWhere(function ($q2) {
+                    $q2->where('queue_status', 'completed')->whereNull('queue_completed_at');
+                });
+        })->count();
+
+        $completedToday += (clone $batchQuery)
+            ->where('queue_status', 'completed')
+            ->whereNotNull('queue_completed_at')
             ->whereDate('queue_completed_at', today())
             ->count();
 
