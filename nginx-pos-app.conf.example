@@ -9,6 +9,22 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # index.html JANGAN di-cache: kalau browser menyimpan versi lama, isinya
+    # menunjuk file JS lama yang sudah terhapus setelah deploy -> halaman blank.
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires off;
+    }
+
+    # File JS/CSS yang sudah tidak ada JANGAN dijawab dengan index.html.
+    # Browser yang meminta JS lalu menerima HTML akan error & layar jadi putih;
+    # 404 yang jujur membuat aplikasi bisa mendeteksi dan memuat ulang sendiri.
+    location /assets/ {
+        try_files $uri =404;
+        expires max;
+        log_not_found off;
+    }
+
     # 2. BACKEND: Proxy ke Laravel API
     # Asumsi: Laravel jalan via 'php artisan serve' di port 8000
     location /api {

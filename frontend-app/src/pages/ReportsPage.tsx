@@ -1,4 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+
+// Grafik dimuat terpisah agar halaman tetap tampil walau library grafik
+// (recharts, ~370 kB) belum selesai diunduh di device/jaringan lemah.
+const SalesBarChart = lazy(() => import('@/components/reports/SalesBarChart'));
+const InventoryReportTab = lazy(() => import('./InventoryReportTab'));
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { MainLayout } from '@/components/layout/MainLayout';
@@ -6,7 +11,7 @@ import { formatCurrency } from '@/utils/calculations';
 import { storageUrl } from '@/lib/utils';
 import { StatCardsSkeleton, TableSkeleton } from '@/components/skeletons';
 import { Badge } from '@/components/ui/badge';
-import InventoryReportTab from './InventoryReportTab';
+
 import {
   TrendingUp,
   DollarSign,
@@ -33,17 +38,8 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts';
-import * as XLSX from 'xlsx';
+
+
 import { useNavigate } from 'react-router-dom';
 import { EditOrderDetailsDialog } from '@/components/EditOrderDetailsDialog';
 
@@ -536,7 +532,10 @@ export default function ReportsPage() {
     return { target: totalTarget, sales: currentSales, achieved, percentage, days: diffDays };
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
+    // xlsx (~380 kB) hanya dibutuhkan saat ekspor, jadi dimuat di sini supaya
+    // tidak membebani pemuatan awal halaman Reports.
+    const XLSX = await import('xlsx');
     const analysis = getTargetAnalysis();
 
     let totalMakanDisiniQty = 0;
@@ -1087,7 +1086,11 @@ export default function ReportsPage() {
 
         {/* Bahan Baku Tab */}
         {mainTab === 'bahan_baku' && (
-          <InventoryReportTab />
+          <Suspense fallback={
+            <div className="py-12 text-center text-sm text-muted-foreground">Memuat laporan inventory...</div>
+          }>
+            <InventoryReportTab />
+          </Suspense>
         )}
 
         {/* Penjualan Content (kondisional) */}
@@ -2050,35 +2053,13 @@ export default function ReportsPage() {
             </div>
 
             {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={350}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fontSize: 12 }}
-                    angle={chartView === 'daily' ? -45 : 0}
-                    textAnchor={chartView === 'daily' ? 'end' : 'middle'}
-                    height={chartView === 'daily' ? 80 : 30}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
-                  />
-                  <Tooltip
-                    formatter={(value: any) => formatCurrency(value)}
-                    contentStyle={{
-                      backgroundColor: 'hsl(var(--card))',
-                      border: '1px solid hsl(var(--border))',
-                      borderRadius: '8px',
-                    }}
-                  />
-                  <Legend />
-                  <Bar dataKey="pendapatan" fill="#10b981" name="Pendapatan" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="hpp" fill="#f59e0b" name="HPP (Belanja)" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="gaji" fill="#f97316" name="Gaji" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="profit" fill="#3b82f6" name="Profit Bersih" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <Suspense fallback={
+                <div className="h-[350px] flex items-center justify-center text-sm text-muted-foreground">
+                  Memuat grafik...
+                </div>
+              }>
+                <SalesBarChart chartData={chartData} chartView={chartView} />
+              </Suspense>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
                 <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-50" />
