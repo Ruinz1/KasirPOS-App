@@ -504,6 +504,36 @@ export default function POSPage() {
     }
   };
 
+  // Meja yang menunggu dikembalikan: terisi oleh pesanan yang SUDAH lunas.
+  // Pesanan bayar nanti tidak masuk sini karena mejanya otomatis kosong saat dilunasi.
+  const tablesAwaitingReturn = availableTables.filter(
+    (t: any) => t.status === 'occupied' && t.current_order?.payment_status === 'paid'
+  );
+
+  // Kasir menekan tombol ini saat nomor meja fisik dikembalikan oleh pelanggan.
+  const handleReleaseTable = async (table: any) => {
+    const result = await Swal.fire({
+      title: `Meja ${table.table_number} selesai?`,
+      text: 'Nomor meja akan kembali kosong dan bisa dipakai pelanggan berikutnya.',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Ya, Selesai',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#16a34a',
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+      await api.post(`/tables/${table.id}/release`);
+      toast.success(`Meja ${table.table_number} sudah kosong`);
+      if (selectedTableId === table.id) setSelectedTableId(null);
+      fetchAvailableTables();
+    } catch (error: any) {
+      console.error('Failed to release table:', error);
+      toast.error(error.response?.data?.message || 'Gagal mengosongkan meja');
+    }
+  };
+
   const categories = [...new Set(menuItems.map((m) => m.category))];
 
   const filteredItems = menuItems
@@ -2251,6 +2281,43 @@ export default function POSPage() {
             </div>
           </div>
 
+          {/* Meja menunggu dikembalikan — pesanan sudah lunas, nomor meja fisik masih dipegang
+              pelanggan. Kasir menekan "Selesai" begitu nomor mejanya dikembalikan. */}
+          {tablesAwaitingReturn.length > 0 && (
+            <div className="px-2 md:px-4 py-2 border-b border-border bg-amber-50 dark:bg-amber-950/30">
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[11px] uppercase font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                  <Utensils className="w-3 h-3" />
+                  Meja Terisi ({tablesAwaitingReturn.length})
+                </p>
+                <span className="text-[10px] text-amber-600/80 dark:text-amber-500/80">Klik Selesai saat nomor dikembalikan</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {tablesAwaitingReturn.map((table: any) => (
+                  <button
+                    key={table.id}
+                    onClick={() => handleReleaseTable(table)}
+                    title={`Kosongkan Meja ${table.table_number}`}
+                    className="group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-lg bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 hover:border-green-500 transition-colors"
+                  >
+                    <span className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                      Meja {table.table_number}
+                    </span>
+                    {table.current_order?.customer_name && (
+                      <span className="text-[10px] text-muted-foreground max-w-[70px] truncate">
+                        {table.current_order.customer_name}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-600 text-white group-hover:bg-green-700">
+                      <Check className="w-3 h-3" />
+                      Selesai
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Customer Name & Member */}
           <div className="p-2 md:p-4 border-b border-border bg-card/50 space-y-1.5 md:space-y-2">
             {!isAdmin() && (
@@ -2286,8 +2353,13 @@ export default function POSPage() {
                 <SelectContent>
                   {availableTables.map((table) => (
                     <SelectItem key={table.id} value={String(table.id)}>
-                      Meja {table.table_number}
-                      {table.status === 'occupied' ? ' — Terisi (buat nota baru)' : ''}
+                      <span className="flex items-center gap-2">
+                        <span className={`inline-block w-2 h-2 rounded-full ${table.status === 'occupied' ? 'bg-red-500' : 'bg-green-500'}`} />
+                        Meja {table.table_number}
+                        <span className={`text-[10px] font-semibold ${table.status === 'occupied' ? 'text-red-500' : 'text-green-600'}`}>
+                          {table.status === 'occupied' ? 'Terisi' : 'Kosong'}
+                        </span>
+                      </span>
                     </SelectItem>
                   ))}
                   {availableTables.length === 0 && (
@@ -2738,8 +2810,13 @@ export default function POSPage() {
                     <SelectContent>
                       {availableTables.map((table) => (
                         <SelectItem key={table.id} value={String(table.id)}>
-                          Meja {table.table_number}
-                          {table.status === 'occupied' ? ' — Terisi (buat nota baru)' : ''}
+                          <span className="flex items-center gap-2">
+                            <span className={`inline-block w-2 h-2 rounded-full ${table.status === 'occupied' ? 'bg-red-500' : 'bg-green-500'}`} />
+                            Meja {table.table_number}
+                            <span className={`text-[10px] font-semibold ${table.status === 'occupied' ? 'text-red-500' : 'text-green-600'}`}>
+                              {table.status === 'occupied' ? 'Terisi' : 'Kosong'}
+                            </span>
+                          </span>
                         </SelectItem>
                       ))}
                       {availableTables.length === 0 && (

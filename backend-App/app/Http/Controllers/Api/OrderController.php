@@ -477,17 +477,30 @@ class OrderController extends Controller
             
             $order->save();
 
-            // Assign meja hanya untuk dine-in yang sudah lunas (sesuai pilihan meja di form kasir).
+            // Assign meja untuk dine-in sesuai pilihan meja di form kasir, baik pesanan sudah
+            // lunas maupun bayar nanti. Untuk pesanan bayar nanti, meja ditandai terisi sekarang
+            // lalu otomatis dikosongkan begitu pesanan dilunasi (lihat updatePayment).
             // Meja boleh sedang terisi order lain: pesanan tambahan di meja yang sama dibuat sebagai
             // nota baru terpisah, dan meja tsb dialihkan mengikuti nota terbaru ini.
-            if (!empty($validated['table_id']) && $validated['order_type'] === 'dine_in' && $order->payment_status === 'paid') {
+            if (!empty($validated['table_id']) && $validated['order_type'] === 'dine_in') {
                 $table = Table::find($validated['table_id']);
                 if ($table) {
-                    $table->status = 'occupied';
-                    $table->current_order_id = $order->id;
-                    $table->save();
                     $order->table_id = $table->id;
                     $order->save();
+
+                    // Meja hanya dialihkan ke nota ini jika meja belum dipegang nota lunas yang
+                    // masih menunggu pengembalian nomor meja. Kalau dialihkan ke nota "bayar nanti",
+                    // pelunasan nota tambahan akan mengosongkan meja sebelum nomornya dikembalikan.
+                    $heldByPaidOrder = $table->status === 'occupied'
+                        && $table->current_order_id
+                        && $table->current_order_id != $order->id
+                        && optional(Order::find($table->current_order_id))->payment_status === 'paid';
+
+                    if (!$heldByPaidOrder) {
+                        $table->status = 'occupied';
+                        $table->current_order_id = $order->id;
+                        $table->save();
+                    }
                 }
             }
 
@@ -654,12 +667,14 @@ class OrderController extends Controller
             $order->save();
         }
 
-        // Assign meja yang sudah dipilih di form kasir begitu pesanan dine-in pending ini dilunasi.
+        // Pesanan "bayar nanti" (dine-in): begitu dilunasi, tamu selesai dan meja otomatis
+        // dikosongkan. Hanya meja yang memang masih dipegang oleh pesanan ini yang dilepas,
+        // supaya meja yang sudah dialihkan ke nota lain tidak ikut terkosongkan.
         if ($wasPending && $order->payment_status === 'paid' && $order->order_type === 'dine_in' && $order->table_id) {
             $table = Table::find($order->table_id);
-            if ($table) {
-                $table->status = 'occupied';
-                $table->current_order_id = $order->id;
+            if ($table && $table->current_order_id == $order->id) {
+                $table->status = 'available';
+                $table->current_order_id = null;
                 $table->save();
             }
         }

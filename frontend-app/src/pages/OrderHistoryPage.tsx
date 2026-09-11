@@ -129,18 +129,16 @@ const OrderHistoryPage = () => {
     }, [selectedDate, statusFilter]);
 
     // TTS Logic
-    // Dine-in: panggil nama + selesai (tanpa "Makan Disini")
-    // Takeaway / ada item bungkus: panggil nama + Dibungkus
+    // Hanya pesanan yang ada bungkusnya yang dipanggil namanya. Pesanan makan sini murni
+    // tidak di-TTS karena pelanggan sudah memegang nomor meja fisik.
     const speakOrderCompleted = (customerName: string, isTakeaway: boolean, items?: OrderItem[]) => {
         if ('speechSynthesis' in window) {
+            const hasAnyTakeawayItem = items?.some(i => i.is_takeaway) || false;
+            if (!isTakeaway && !hasAnyTakeawayItem) return;
+
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance();
-            const hasAnyTakeawayItem = items?.some(i => i.is_takeaway) || false;
-            if (isTakeaway || hasAnyTakeawayItem) {
-                utterance.text = `Pesanan atas nama ${customerName}, Dibungkus. Silakan diambil.`;
-            } else {
-                utterance.text = `Pesanan atas nama ${customerName}, selesai.`;
-            }
+            utterance.text = `Pesanan atas nama ${customerName}, Dibungkus. Silakan diambil.`;
             utterance.lang = 'id-ID';
             utterance.rate = 0.9;
             utterance.pitch = 1;

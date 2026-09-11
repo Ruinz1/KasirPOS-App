@@ -467,13 +467,16 @@ const FoodQueuePage = () => {
         }
     };
 
+    // Hanya pesanan yang ada bungkusnya yang dipanggil. Pesanan makan sini murni tidak
+    // di-TTS karena pelanggan sudah memegang nomor meja fisik dan makanan diantar ke mejanya.
     const speakFoodCompleted = (customerName: string, order: QueueOrder) => {
         if ("speechSynthesis" in window) {
-            window.speechSynthesis.cancel();
             const isFullTakeaway = order.order_type === 'takeaway';
             const hasAnyTakeawayItem = order.items.some(i => i.is_takeaway);
-            let text = `Pesanan atas nama ${customerName}`;
-            if (isFullTakeaway || hasAnyTakeawayItem) text += `, Dibungkus`;
+            if (!isFullTakeaway && !hasAnyTakeawayItem) return;
+
+            window.speechSynthesis.cancel();
+            const text = `Pesanan atas nama ${customerName}, Dibungkus`;
             const utt = new SpeechSynthesisUtterance(text);
             utt.lang = "id-ID"; utt.rate = 0.9; utt.pitch = 1;
             const voices = window.speechSynthesis.getVoices();

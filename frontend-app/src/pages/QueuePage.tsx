@@ -300,18 +300,17 @@ const QueuePage = () => {
         return () => clearInterval(interval);
     }, []);
 
-    // Fungsi Text-to-Speech - hanya untuk makanan (food)
-    // Jika dine_in: cukup panggil nama saja (tanpa "Makan Sini")
-    // Jika takeaway atau ada item bungkus: panggil nama + "Dibungkus"
+    // Fungsi Text-to-Speech - hanya untuk pesanan yang ADA BUNGKUSNYA.
+    // Pesanan makan sini murni tidak dipanggil: pelanggan sudah memegang nomor meja fisik,
+    // jadi makanan diantar ke mejanya tanpa perlu dipanggil namanya.
     const speakOrderCompleted = (customerName: string, order: QueueOrder) => {
         if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
             const isFullTakeaway = order.order_type === 'takeaway';
             const hasAnyTakeawayItem = order.items.some(i => i.is_takeaway);
-            let textToSpeak = `Pesanan atas nama ${customerName}`;
-            if (isFullTakeaway || hasAnyTakeawayItem) {
-                textToSpeak += `, Dibungkus`;
-            }
+            if (!isFullTakeaway && !hasAnyTakeawayItem) return;
+
+            window.speechSynthesis.cancel();
+            const textToSpeak = `Pesanan atas nama ${customerName}, Dibungkus`;
             const utterance = new SpeechSynthesisUtterance(textToSpeak);
             utterance.lang = 'id-ID';
             utterance.rate = 0.9;
