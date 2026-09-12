@@ -120,6 +120,7 @@ interface Order {
   payment_status?: 'paid' | 'pending';
   order_type?: 'dine_in' | 'takeaway' | 'delivery';
   table_id?: number | null;
+  table?: { id: number; table_number: string } | null;
   paid_amount?: number;
   second_paid_amount?: number;
   change_amount?: number;
@@ -524,6 +525,17 @@ export default function POSPage() {
   const tablesAwaitingReturn = availableTables.filter(
     (t: any) => t.status === 'occupied' && t.current_order?.payment_status === 'paid'
   );
+
+  // Nomor meja sebuah pesanan. Pakai relasi `table` dari API; kalau belum tersedia,
+  // jatuh kembali ke daftar meja yang sudah di-fetch lewat table_id.
+  const orderTableNumber = (order: any): string | null => {
+    if (order?.table?.table_number) return String(order.table.table_number);
+    if (order?.table_id) {
+      const tbl = availableTables.find((t: any) => t.id === order.table_id);
+      if (tbl) return String(tbl.table_number);
+    }
+    return null;
+  };
 
   // Kasir menekan tombol ini saat nomor meja fisik dikembalikan oleh pelanggan.
   const handleReleaseTable = async (table: any) => {
@@ -1364,7 +1376,20 @@ export default function POSPage() {
                           <div className="flex-1">
                             <div className="flex justify-between items-start mb-2">
                               <div>
-                                <h3 className="font-bold text-lg">#{order.daily_number} - {order.customer_name || 'Tanpa Nama'}</h3>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="font-bold text-lg">#{order.daily_number} - {order.customer_name || 'Tanpa Nama'}</h3>
+                                  {/* Nomor meja supaya kasir tahu pesanan ini milik meja mana */}
+                                  {orderTableNumber(order) ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary text-primary-foreground text-xs font-bold">
+                                      <Utensils className="w-3 h-3" />
+                                      Meja {orderTableNumber(order)}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted text-muted-foreground text-xs font-semibold">
+                                      {order.order_type === 'takeaway' ? 'Bungkus' : order.order_type === 'delivery' ? 'Delivery' : 'Tanpa Meja'}
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-sm text-muted-foreground">
                                   {new Date(order.created_at).toLocaleString('id-ID')}
                                 </p>
@@ -1393,9 +1418,12 @@ export default function POSPage() {
                                 setAddToOrderId(order.id);
                                 setCustomerName(order.customer_name || '');
                                 setOrderType((order as any).order_type || 'dine_in');
+                                // Bawa serta nomor meja pesanan supaya tambahan tetap di meja yang sama
+                                setSelectedTableId(order.table_id || null);
                                 setShowPendingList(false);
                                 setCart([]); // Clear cart to start adding new items
-                                toast.info(`Menambahkan pesanan untuk #${order.daily_number}`);
+                                const tblNo = orderTableNumber(order);
+                                toast.info(`Menambahkan pesanan untuk #${order.daily_number}${tblNo ? ` — Meja ${tblNo}` : ''}`);
                               }}
                             >
                               <Plus className="w-4 h-4 mr-1" />
@@ -1453,6 +1481,13 @@ export default function POSPage() {
                       <p className="text-sm font-medium text-muted-foreground mt-1">
                         {settlingOrder.customer_name || 'Pelanggan'} - #{settlingOrder.daily_number}
                       </p>
+                      {/* Nomor meja pesanan yang sedang dilunasi */}
+                      {orderTableNumber(settlingOrder) && (
+                        <span className="inline-flex items-center gap-1.5 mt-2 px-3 py-1 rounded-lg bg-primary text-primary-foreground text-sm font-bold">
+                          <Utensils className="w-3.5 h-3.5" />
+                          Meja {orderTableNumber(settlingOrder)}
+                        </span>
+                      )}
                     </div>
 
                     {/* Items List */}

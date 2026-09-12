@@ -22,7 +22,7 @@ class OrderController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Order::with(['user', 'items.menuItem']);
+        $query = Order::with(['user', 'items.menuItem', 'table']);
         
         // Remove default status filter so we can see all orders (including cancelled)
         // Frontend will handle the display coloring
