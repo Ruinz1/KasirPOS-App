@@ -156,7 +156,7 @@ export default function POSPage() {
   const [showReceipt, setShowReceipt] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'qris'>('cash');
-  const [orderType, setOrderType] = useState<'dine_in' | 'takeaway'>('dine_in');
+  const [orderType, setOrderType] = useState<'dine_in' | 'takeaway' | 'delivery'>('dine_in');
   const [paidAmount, setPaidAmount] = useState<string>('');
   const [sendPointsWa, setSendPointsWa] = useState(true); // kirim info poin via WhatsApp setelah bayar
   const [loading, setLoading] = useState(true);
@@ -328,6 +328,21 @@ export default function POSPage() {
       // Clear location state
       window.history.replaceState({}, '');
       toast.info(`Mengedit pesanan #${order.daily_number || order.id}`);
+    }
+
+    // Datang dari halaman Meja lewat tombol "Tambah Pesanan": langsung set dine-in dengan
+    // nomor meja tsb terpilih. Keranjang dibiarkan kosong — pesanan tambahan jadi nota baru.
+    if (location.state?.presetTable) {
+      const preset = location.state.presetTable;
+      setOrderType('dine_in');
+      setUseTableSystem(true);
+      setSelectedTableId(preset.id);
+      if (preset.customer_name && preset.customer_name !== 'Pelanggan Umum') {
+        setCustomerName(preset.customer_name);
+      }
+      setCartOpen(true);
+      window.history.replaceState({}, '');
+      toast.info(`Tambah pesanan untuk Meja ${preset.table_number}`);
     }
   }, [location.state]);
   const [storeInfo, setStoreInfo] = useState<{ name: string, address: string, image?: string }>({ name: 'KedaiPOS', address: '' });
@@ -2824,6 +2839,37 @@ export default function POSPage() {
                       )}
                     </SelectContent>
                   </Select>
+
+                  {/* Highlight nomor meja terpilih supaya kasir tidak salah antar saat menyerahkan
+                      nomor meja fisik ke pelanggan. */}
+                  {selectedTableId ? (() => {
+                    const tbl = availableTables.find((t: any) => t.id === selectedTableId);
+                    if (!tbl) return null;
+                    return (
+                      <div className="mt-3 flex items-center gap-4 p-4 rounded-xl border-2 border-primary bg-primary/10">
+                        <div className="flex flex-col items-center justify-center min-w-[72px] h-[72px] rounded-xl bg-primary text-primary-foreground shadow-lg">
+                          <span className="text-[10px] font-bold uppercase tracking-wider opacity-90">Meja</span>
+                          <span className="text-3xl font-black leading-none">{tbl.table_number}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-base font-bold text-primary flex items-center gap-1.5">
+                            <Utensils className="w-4 h-4" />
+                            Meja {tbl.table_number}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Serahkan nomor meja {tbl.table_number} ke pelanggan
+                          </p>
+                          <span className={`inline-block mt-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${tbl.status === 'occupied' ? 'bg-red-500/15 text-red-600' : 'bg-green-500/15 text-green-600'}`}>
+                            {tbl.status === 'occupied' ? 'Sedang terisi — nota baru terpisah' : 'Meja kosong'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })() : (
+                    <div className="mt-3 p-3 rounded-xl border-2 border-dashed border-border bg-muted/30 text-center">
+                      <p className="text-xs text-muted-foreground">Belum ada meja dipilih — pesanan masuk antrian tanpa nomor meja</p>
+                    </div>
+                  )}
                 </div>
               )}
 

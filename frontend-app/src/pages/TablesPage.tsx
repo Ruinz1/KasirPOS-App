@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import api from '@/lib/api';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Users, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Plus, Edit, Trash2, Users, CheckCircle, XCircle, Clock, ShoppingCart } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,7 @@ interface Table {
 }
 
 export default function TablesPage() {
+    const navigate = useNavigate();
     const [tables, setTables] = useState<Table[]>([]);
     const [loading, setLoading] = useState(true);
     const [showDialog, setShowDialog] = useState(false);
@@ -119,6 +121,20 @@ export default function TablesPage() {
                 toast.error(error.response?.data?.message || 'Gagal menghapus meja');
             }
         }
+    };
+
+    // Buka halaman kasir dengan meja ini sudah terpilih. Pesanan tambahan dibuat sebagai
+    // nota baru terpisah, sesuai alur nota tambahan yang berjalan sekarang.
+    const handleAddOrder = (table: Table) => {
+        navigate('/pos', {
+            state: {
+                presetTable: {
+                    id: table.id,
+                    table_number: table.table_number,
+                    customer_name: table.current_order?.customer_name || '',
+                },
+            },
+        });
     };
 
     const handleReleaseTable = async (table: Table) => {
@@ -322,6 +338,16 @@ export default function TablesPage() {
                                     )}
                                 </div>
                             )}
+
+                            {/* Tambah pesanan ke nomor meja ini — nota baru terpisah */}
+                            <button
+                                onClick={() => handleAddOrder(table)}
+                                className="w-full mb-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs py-2 px-3 rounded-lg font-bold transition-colors flex items-center justify-center gap-1.5"
+                                title={`Tambah pesanan untuk Meja ${table.table_number}`}
+                            >
+                                <ShoppingCart className="w-3.5 h-3.5" />
+                                Tambah Pesanan
+                            </button>
 
                             {/* Actions */}
                             <div className="flex gap-2">
