@@ -55,7 +55,10 @@ export default function TablesPage() {
     const fetchTables = async () => {
         try {
             const response = await api.get('/tables');
-            setTables(response.data);
+            const sorted = [...response.data].sort((a: Table, b: Table) =>
+                a.table_number.localeCompare(b.table_number, undefined, { numeric: true, sensitivity: 'base' })
+            );
+            setTables(sorted);
         } catch (error) {
             console.error('Failed to fetch tables:', error);
             toast.error('Gagal memuat data meja');

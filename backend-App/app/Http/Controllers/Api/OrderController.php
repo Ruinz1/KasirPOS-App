@@ -419,20 +419,6 @@ class OrderController extends Controller
                 if (!$menuItem->uses_ingredients) {
                     $stockItem->stock -= $deductionAmount;
                     $stockItem->save();
-
-                    // Catat usage log untuk stok menu langsung
-                    InventoryUsageLog::create([
-                        'store_id'          => $storeId,
-                        'inventory_item_id' => $stockItem->id,
-                        'order_id'          => $order->id,
-                        'order_item_id'     => $orderItem->id,
-                        'quantity_used'     => $deductionAmount,
-                        'unit'              => $stockItem->unit ?? 'pcs',
-                        'price_per_unit'    => 0,
-                        'cost_amount'       => 0,
-                        'usage_type'        => 'order',
-                        'usage_date'        => now()->toDateString(),
-                    ]);
                 } else {
                     // Flush ingredient usage logs yang sudah di-buffer
                     $this->flushUsageLogs($storeId, $order->id, $orderItem->id);
