@@ -47,3 +47,18 @@ export function getStockStatus(stock: StockItem): 'good' | 'warning' | 'critical
   if (percentage <= 100) return 'warning';
   return 'good';
 }
+
+/**
+ * Label pajak untuk nota, mis. "PPN 11%".
+ *
+ * Tarif & nama pajak di-snapshot ke tiap pesanan saat transaksi, jadi nota lama
+ * tetap menampilkan tarif yang benar walau setelan pajak toko diubah kemudian.
+ * Nama pajak diambil dari data toko yang menempel di pesanan bila tersedia.
+ */
+export function receiptTaxLabel(order: any): string {
+  const name = order?.store?.tax_name || order?.tax_name || 'Pajak';
+  const pct = Number(order?.tax_percentage ?? 0);
+  if (!pct || pct <= 0) return name;
+  // Buang nol di belakang: 11.00 -> 11, 10.50 -> 10.5
+  return `${name} ${parseFloat(pct.toFixed(2))}%`;
+}

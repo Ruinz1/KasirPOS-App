@@ -14,6 +14,7 @@ class MenuItem extends Model
     protected $fillable = [
         'name',
         'category',
+        'kitchen_category_id',
         'price',
         'discount_percentage',
         'uses_ingredients',
@@ -37,6 +38,13 @@ class MenuItem extends Model
 
     protected $appends = ['current_stock'];
 
+    /**
+     * Kategori dapur selalu ikut dimuat: tabelnya kecil (satu baris per kategori)
+     * dan dipakai di banyak tempat (nota dapur, papan antrian, kasir), jadi lebih
+     * aman dimuat otomatis daripada menambah eager-load di tiap pemanggilan.
+     */
+    protected $with = ['kitchenCategory'];
+
     protected static function booted()
     {
         static::saving(function ($menuItem) {
@@ -54,6 +62,15 @@ class MenuItem extends Model
     /**
      * Get the parent menu item (for shared stock)
      */
+    /**
+     * Kategori dapur (Bakso, Nasi Goreng, dst) untuk pengelompokan di nota dapur
+     * & papan antrian. Null berarti belum dikelompokkan.
+     */
+    public function kitchenCategory()
+    {
+        return $this->belongsTo(KitchenCategory::class, 'kitchen_category_id');
+    }
+
     public function parent()
     {
         return $this->belongsTo(MenuItem::class, 'parent_id');

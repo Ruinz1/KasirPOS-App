@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { Store as StoreIcon, MapPin, Users, Save, Navigation, Crosshair, Truck, Info, Car, ClipboardList, Target } from 'lucide-react';
+import { Store as StoreIcon, MapPin, Users, Save, Navigation, Crosshair, Truck, Info, Car, ClipboardList, Target, Receipt } from 'lucide-react';
 import { formatCurrency } from '@/utils/calculations';
 
 interface StoreData {
@@ -26,6 +26,10 @@ interface StoreData {
     queue_enabled?: boolean;
     parking_checkout_enabled?: boolean;
     daily_target?: number;
+    tax_enabled?: boolean;
+    tax_percentage?: number;
+    tax_name?: string;
+    tax_inclusive?: boolean;
     users_count?: number;
     owner?: { id: number; name: string; email: string };
 }
@@ -51,7 +55,12 @@ export default function StorePage() {
         parking_fee_motor: '2000',
         parking_fee_mobil: '3000',
         daily_target: '0',
+        tax_percentage: '0',
+        tax_name: 'Pajak',
     });
+    const [taxEnabled, setTaxEnabled] = useState(false);
+    // true = harga menu sudah termasuk pajak; false = pajak ditambahkan di atas harga
+    const [taxInclusive, setTaxInclusive] = useState(false);
     const [queueEnabled, setQueueEnabled] = useState(true);
     const [parkingCheckoutEnabled, setParkingCheckoutEnabled] = useState(true);
     const [imageFile, setImageFile] = useState<File | null>(null);
@@ -95,7 +104,11 @@ export default function StorePage() {
                 parking_fee_motor: String(store.parking_fee_motor ?? 2000),
                 parking_fee_mobil: String(store.parking_fee_mobil ?? 3000),
                 daily_target: String(store.daily_target ?? 0),
+                tax_percentage: String(store.tax_percentage ?? 0),
+                tax_name: store.tax_name || 'Pajak',
             });
+            setTaxEnabled(store.tax_enabled ?? false);
+            setTaxInclusive(store.tax_inclusive ?? false);
             setQueueEnabled(store.queue_enabled ?? true);
             setParkingCheckoutEnabled(store.parking_checkout_enabled ?? true);
             if (store.image) {
@@ -194,6 +207,10 @@ export default function StorePage() {
         data.append('queue_enabled', queueEnabled ? '1' : '0');
         data.append('parking_checkout_enabled', parkingCheckoutEnabled ? '1' : '0');
         data.append('daily_target', formData.daily_target || '0');
+        data.append('tax_enabled', taxEnabled ? '1' : '0');
+        data.append('tax_percentage', formData.tax_percentage || '0');
+        data.append('tax_name', formData.tax_name || 'Pajak');
+        data.append('tax_inclusive', taxInclusive ? '1' : '0');
         if (imageFile) {
             data.append('image', imageFile);
         }
@@ -214,6 +231,18 @@ export default function StorePage() {
         const base = parseInt(formData.delivery_base_fee) || 0;
         const perKm = parseInt(formData.delivery_fee_per_km) || 2000;
         return base + 3 * perKm; // contoh 3 km
+    })();
+
+    // Contoh perhitungan pajak untuk harga menu Rp 100.000
+    const taxExample = (() => {
+        const pct = parseFloat(formData.tax_percentage) || 0;
+        if (taxInclusive) {
+            // Harga sudah termasuk pajak: pajak dikeluarkan dari dalam harga.
+            const tax = Math.round(100000 * pct / (100 + pct));
+            return { tax, base: 100000 - tax, total: 100000 };
+        }
+        const tax = Math.round(100000 * pct / 100);
+        return { tax, base: 100000, total: 100000 + tax };
     })();
 
     const content = (
@@ -491,6 +520,89 @@ export default function StorePage() {
                                     </div>
                                 </div>
                                 <Switch checked={queueEnabled} onCheckedChange={setQueueEnabled} />
+                            </div>
+
+                            {/* ── Pajak ── */}
+                            <div className="space-y-3 rounded-xl border border-border bg-secondary/20 p-4">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="flex items-center gap-2">
+                                        <Receipt className="w-4 h-4 text-primary" />
+                                        <div>
+                                            <p className="font-semibold text-sm">Pajak</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {taxEnabled
+                                                    ? 'Pajak ditambahkan otomatis ke setiap transaksi dan tercetak di nota'
+                                                    : 'Pajak dimatikan. Total tagihan tidak dikenakan pajak.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Switch checked={taxEnabled} onCheckedChange={setTaxEnabled} />
+                                </div>
+
+                                {taxEnabled && (
+                                    <>
+                                        <div className="grid md:grid-cols-2 gap-3">
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs">Persentase Pajak</Label>
+                                                <div className="flex items-center gap-1.5">
+                                                    <Input
+                                                        type="number"
+                                                        min="0"
+                                                        max="100"
+                                                        step="0.01"
+                                                        placeholder="11"
+                                                        value={formData.tax_percentage}
+                                                        onChange={e => setFormData({ ...formData, tax_percentage: e.target.value })}
+                                                        className="text-sm"
+                                                    />
+                                                    <span className="text-xs text-muted-foreground shrink-0">%</span>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs">Nama Pajak di Nota</Label>
+                                                <Input
+                                                    type="text"
+                                                    maxLength={50}
+                                                    placeholder="PPN"
+                                                    value={formData.tax_name}
+                                                    onChange={e => setFormData({ ...formData, tax_name: e.target.value })}
+                                                    className="text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                        {/* Mode: harga menu sudah termasuk pajak atau belum */}
+                                        <div className="flex items-center justify-between gap-4 rounded-lg bg-background/60 border border-border p-3">
+                                            <div>
+                                                <p className="text-sm font-medium">Harga menu sudah termasuk pajak</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {taxInclusive
+                                                        ? 'Pelanggan membayar persis seperti harga di menu. Pajak dirinci di nota dengan cara dihitung mundur dari harga.'
+                                                        : 'Pajak ditambahkan di atas harga menu, sehingga total bayar lebih besar dari harga yang tertera.'}
+                                                </p>
+                                            </div>
+                                            <Switch checked={taxInclusive} onCheckedChange={setTaxInclusive} />
+                                        </div>
+
+                                        <div className="flex items-start gap-2 rounded-lg bg-background/60 border border-border p-3">
+                                            <Info className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
+                                            <p className="text-xs text-muted-foreground">
+                                                Contoh menu berharga {formatCurrency(100000)} dengan{' '}
+                                                <span className="font-semibold text-foreground">
+                                                    {formData.tax_name || 'Pajak'} {parseFloat(formData.tax_percentage) || 0}%
+                                                </span>:
+                                                <br />
+                                                Dasar pengenaan {formatCurrency(taxExample.base)} + pajak{' '}
+                                                {formatCurrency(taxExample.tax)} ={' '}
+                                                <span className="font-semibold text-foreground">{formatCurrency(taxExample.total)}</span>
+                                                {taxInclusive
+                                                    ? ' (pelanggan tetap bayar sesuai harga menu).'
+                                                    : ' (pelanggan bayar lebih besar dari harga menu).'}
+                                                <br />
+                                                Pajak dihitung dari subtotal (termasuk ongkir) dan tidak dihitung sebagai laba toko.
+                                            </p>
+                                        </div>
+                                    </>
+                                )}
                             </div>
 
                             {/* ── Target Penjualan Harian ── */}

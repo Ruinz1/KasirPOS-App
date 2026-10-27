@@ -15,7 +15,9 @@ import {
   Cookie,
   ChevronUp,
   ChevronDown,
-  CheckCircle2
+  CheckCircle2,
+  ChefHat,
+  Settings2
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -24,6 +26,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { KitchenCategoryManager } from '@/components/menu/KitchenCategoryManager';
+import { KitchenCategory, kitchenColorClasses } from '@/lib/kitchenCategory';
 
 interface InventoryItem {
   id: number;
@@ -48,6 +52,8 @@ interface MenuItem {
   id: number;
   name: string;
   category: string;
+  kitchen_category_id?: number | null;
+  kitchen_category?: KitchenCategory | null;
   store_id?: string;
   price: number;
   discount_percentage?: number;
@@ -91,6 +97,10 @@ export default function MenuPage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
 
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string | null>(null);
+  // Kategori dapur (Bakso, Nasi Goreng, dst) — pengelompokan nota dapur & antrian
+  const [kitchenCategories, setKitchenCategories] = useState<KitchenCategory[]>([]);
+  const [showKitchenManager, setShowKitchenManager] = useState(false);
+  const [kitchenFilter, setKitchenFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -108,6 +118,7 @@ export default function MenuPage() {
   const [formData, setFormData] = useState({
     name: '',
     category: 'Kopi',
+    kitchen_category_id: '' as string,
     price: '',
     discount_percentage: '0',
     uses_ingredients: true,
@@ -177,12 +188,14 @@ export default function MenuPage() {
         params.store_id = selectedStoreId;
       }
 
-      const [menuRes, inventoryRes] = await Promise.all([
+      const [menuRes, inventoryRes, kitchenRes] = await Promise.all([
         api.get('/menu', { params }),
         api.get('/inventory', { params: { ...params, type: 'stock' } }),
+        api.get('/kitchen-categories', { params }),
       ]);
       setMenuItems(menuRes.data);
       setInventoryItems(inventoryRes.data);
+      setKitchenCategories(kitchenRes.data || []);
     } catch (error) {
       console.error('Failed to fetch data:', error);
       toast.error('Gagal memuat data');
@@ -194,7 +207,12 @@ export default function MenuPage() {
   const filteredItems = menuItems.filter((item) => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = !selectedCategoryFilter || item.category === selectedCategoryFilter;
-    return matchesSearch && matchesCategory;
+    // Filter kategori dapur: 'none' = menu yang belum dikelompokkan
+    const matchesKitchen = !kitchenFilter
+      || (kitchenFilter === 'none'
+        ? !item.kitchen_category_id
+        : String(item.kitchen_category_id ?? '') === kitchenFilter);
+    return matchesSearch && matchesCategory && matchesKitchen;
   });
 
   const handleAddIngredient = () => {
@@ -257,6 +275,10 @@ export default function MenuPage() {
       const payload: any = {
         name: formData.name,
         category: formData.category,
+        // Kosong = menu belum dikelompokkan ke bagian dapur mana pun
+        kitchen_category_id: formData.kitchen_category_id
+          ? parseInt(formData.kitchen_category_id)
+          : null,
         price: parseFloat(formData.price),
         discount_percentage: parseFloat(formData.discount_percentage) || 0,
         uses_ingredients: formData.uses_ingredients,
@@ -312,6 +334,7 @@ export default function MenuPage() {
     setFormData({
       name: item.name,
       category: item.category,
+      kitchen_category_id: item.kitchen_category_id ? String(item.kitchen_category_id) : '',
       price: item.price.toString(),
       discount_percentage: (item.discount_percentage || 0).toString(),
       uses_ingredients: item.uses_ingredients ?? true,
@@ -357,6 +380,7 @@ export default function MenuPage() {
     setFormData({
       name: '',
       category: 'Kopi',
+      kitchen_category_id: '',
       price: '',
       discount_percentage: '0',
       uses_ingredients: true,
@@ -498,6 +522,9 @@ export default function MenuPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          Menentukan menu masuk antrian makanan atau minuman
+                        </p>
                       </div>
                       <div>
                         <Label>Harga Jual</Label>
@@ -509,6 +536,47 @@ export default function MenuPage() {
                           onChange={(e) => setFormData({ ...formData, price: e.target.value })}
                         />
                       </div>
+                    </div>
+
+                    {/* Kategori Dapur: pengelompokan di nota dapur & papan antrian */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <Label className="flex items-center gap-1.5">
+                          <ChefHat className="w-3.5 h-3.5 text-primary" />
+                          Kategori Dapur
+                        </Label>
+                        <button
+                          type="button"
+                          className="text-[11px] text-primary hover:underline flex items-center gap-1"
+                          onClick={() => setShowKitchenManager(true)}
+                        >
+                          <Settings2 className="w-3 h-3" /> Kelola
+                        </button>
+                      </div>
+                      <Select
+                        value={formData.kitchen_category_id || 'none'}
+                        onValueChange={(v) =>
+                          setFormData({ ...formData, kitchen_category_id: v === 'none' ? '' : v })
+                        }
+                      >
+                        <SelectTrigger className="input-coffee">
+                          <SelectValue placeholder="Pilih kategori dapur" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Tanpa kategori dapur</SelectItem>
+                          {kitchenCategories.map((kc) => (
+                            <SelectItem key={kc.id} value={String(kc.id)}>
+                              <span className="flex items-center gap-2">
+                                <span className={`w-2.5 h-2.5 rounded-full ${kitchenColorClasses(kc.color).dot}`} />
+                                {kc.name}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Mengelompokkan pesanan di nota dapur &amp; papan antrian (mis. Bakso, Nasi Goreng)
+                      </p>
                     </div>
 
                     <div>
@@ -1024,6 +1092,60 @@ export default function MenuPage() {
           ))}
         </div>
 
+        {/* Filter Kategori Dapur — hanya tampil bila tokonya sudah punya kategori */}
+        {kitchenCategories.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-2 no-scrollbar">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium shrink-0 pr-1">
+              <ChefHat className="w-3.5 h-3.5" /> Dapur:
+            </span>
+            <button
+              onClick={() => setKitchenFilter(null)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap border ${
+                kitchenFilter === null
+                  ? 'bg-foreground text-background border-foreground shadow-sm'
+                  : 'bg-secondary text-secondary-foreground border-transparent hover:bg-secondary/80'
+              }`}
+            >
+              Semua
+            </button>
+            {kitchenCategories.map((kc) => {
+              const cls = kitchenColorClasses(kc.color);
+              const active = kitchenFilter === String(kc.id);
+              return (
+                <button
+                  key={kc.id}
+                  onClick={() => setKitchenFilter(active ? null : String(kc.id))}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap border flex items-center gap-1.5 ${
+                    active ? cls.header + ' border-transparent shadow-sm' : cls.badge
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${active ? 'bg-white/80' : cls.dot}`} />
+                  {kc.name}
+                  <span className="opacity-70">({kc.menu_items_count ?? 0})</span>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setKitchenFilter(kitchenFilter === 'none' ? null : 'none')}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap border ${
+                kitchenFilter === 'none'
+                  ? 'bg-foreground text-background border-foreground shadow-sm'
+                  : 'bg-secondary text-secondary-foreground border-transparent hover:bg-secondary/80'
+              }`}
+            >
+              Tanpa kategori
+            </button>
+            {hasPermission('manage_menu') && (
+              <button
+                onClick={() => setShowKitchenManager(true)}
+                className="px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground transition-all whitespace-nowrap flex items-center gap-1 shrink-0"
+              >
+                <Settings2 className="w-3 h-3" /> Kelola
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Search */}
         <div className="relative mb-6">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
@@ -1070,7 +1192,18 @@ export default function MenuPage() {
                 )}
               </div>
               <div className="flex items-center gap-2 mb-3">
-                <p className="text-sm text-muted-foreground">{item.category}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm text-muted-foreground">{item.category}</p>
+                  {item.kitchen_category && (
+                    <span
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border ${kitchenColorClasses(item.kitchen_category.color).badge}`}
+                      title="Kategori dapur — pengelompokan di nota dapur & antrian"
+                    >
+                      <ChefHat className="w-2.5 h-2.5" />
+                      {item.kitchen_category.name}
+                    </span>
+                  )}
+                </div>
                 <>
                   {item.status && (
                     <span className={`px-2 py-0.5 text-xs font-semibold rounded ${item.status === 'ready' ? 'bg-success/10 text-success' :
@@ -1156,6 +1289,15 @@ export default function MenuPage() {
             )}
           </div>
         )}
+
+        {/* Kelola kategori dapur */}
+        <KitchenCategoryManager
+          open={showKitchenManager}
+          onOpenChange={setShowKitchenManager}
+          categories={kitchenCategories}
+          onChanged={fetchData}
+          storeId={isAdmin() && selectedStoreId && selectedStoreId !== 'all' ? selectedStoreId : null}
+        />
       </div>
     </MainLayout >
   );

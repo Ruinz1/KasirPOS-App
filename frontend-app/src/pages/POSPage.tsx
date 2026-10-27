@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { formatCurrency } from '@/utils/calculations';
+import { formatCurrency, receiptTaxLabel } from '@/utils/calculations';
+import { groupByKitchenCategory, groupByKitchenCategoryName, shouldShowGroups, kitchenColorClasses } from '@/lib/kitchenCategory';
 import { useLocation } from 'react-router-dom';
 import {
   Search,
@@ -42,7 +43,7 @@ import type { Member, PointReward } from '@/types/member';
 import { queueOfflineOrder, isNetworkError } from '@/lib/offlineOrders';
 import { pollWaStatus } from '@/lib/pollWaStatus';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
-import { WifiOff, RefreshCw, Truck } from 'lucide-react';
+import { WifiOff, RefreshCw, Truck, Receipt, ChefHat } from 'lucide-react';
 import { DeliveryLocationPicker } from '@/components/pos/DeliveryLocationPicker';
 
 
@@ -53,6 +54,8 @@ interface MenuItem {
   id: number;
   name: string;
   category: string;
+  /** Kategori dapur (Bakso, Nasi Goreng, dst) — pengelompokan nota dapur & antrian. */
+  kitchen_category?: { id: number; name: string; color: string; sort_order: number } | null;
   price: number;
   discount_percentage?: number;
   uses_ingredients?: boolean;
@@ -113,6 +116,10 @@ interface Order {
   customer_name: string;
   member_id?: number | null;
   total: number;
+  /** Nilai sebelum pajak (item + ongkir). */
+  subtotal?: number;
+  tax_percentage?: number;
+  tax_amount?: number;
   cogs: number;
   profit: number;
   payment_method: string;
@@ -174,6 +181,9 @@ export default function POSPage() {
   const [editingOrderId, setEditingOrderId] = useState<number | null>(null);
   const [addToOrderId, setAddToOrderId] = useState<number | null>(null);
   const [receiptMode, setReceiptMode] = useState<'customer' | 'kitchen'>('customer');
+  // Nota dapur bisa dicetak per bagian: 'all' = semua, 'kc-<id>' = satu kategori,
+  // 'ungrouped' = item tanpa kategori. Dipakai bersama oleh preview & hasil cetak.
+  const [kitchenPrintFilter, setKitchenPrintFilter] = useState<string>('all');
   const [addedItemsForPrint, setAddedItemsForPrint] = useState<any[]>([]); // For printing only added items
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -346,7 +356,15 @@ export default function POSPage() {
       toast.info(`Tambah pesanan untuk Meja ${preset.table_number}`);
     }
   }, [location.state]);
-  const [storeInfo, setStoreInfo] = useState<{ name: string, address: string, image?: string }>({ name: 'KedaiPOS', address: '' });
+  const [storeInfo, setStoreInfo] = useState<{
+    name: string,
+    address: string,
+    image?: string,
+    tax_enabled?: boolean,
+    tax_percentage?: number,
+    tax_name?: string,
+    tax_inclusive?: boolean,
+  }>({ name: 'KedaiPOS', address: '' });
 
   const getCategoryIcon = (category: string) => {
     const className = "w-6 h-6 text-primary";
@@ -377,7 +395,11 @@ export default function POSPage() {
         setStoreInfo({
           name: selected.name,
           address: selected.location || '',
-          image: (selected as any).image ? (selected as any).image : undefined
+          image: (selected as any).image ? (selected as any).image : undefined,
+          tax_enabled: (selected as any).tax_enabled ?? false,
+          tax_percentage: Number((selected as any).tax_percentage ?? 0),
+          tax_name: (selected as any).tax_name || 'Pajak',
+          tax_inclusive: (selected as any).tax_inclusive ?? false,
         });
       }
       fetchMenuItems();
@@ -391,7 +413,11 @@ export default function POSPage() {
       setStoreInfo({
         name: res.data.name,
         address: res.data.location || '',
-        image: res.data.image ? res.data.image : undefined
+        image: res.data.image ? res.data.image : undefined,
+        tax_enabled: res.data.tax_enabled ?? false,
+        tax_percentage: Number(res.data.tax_percentage ?? 0),
+        tax_name: res.data.tax_name || 'Pajak',
+        tax_inclusive: res.data.tax_inclusive ?? false,
       });
     } catch (err) {
       console.error("Failed to fetch store info", err);
@@ -851,8 +877,27 @@ export default function POSPage() {
     const variantPrice = Number(item.variant_price || 0);
     return sum + ((basePrice + variantPrice) * item.quantity);
   }, 0);
-  const cartTotal = cartItemsTotal + (orderType === 'delivery' && deliveryInfo ? deliveryInfo.delivery_fee : 0);
+  // Nilai kotor keranjang = sejumlah harga menu (+ongkir), apa adanya.
+  const cartGross = cartItemsTotal + (orderType === 'delivery' && deliveryInfo ? deliveryInfo.delivery_fee : 0);
+  const taxPercentage = storeInfo.tax_enabled ? Number(storeInfo.tax_percentage || 0) : 0;
+  const taxInclusive = !!storeInfo.tax_inclusive;
+  const taxLabel = `${storeInfo.tax_name || 'Pajak'}${taxPercentage > 0 ? ` ${parseFloat(taxPercentage.toFixed(2))}%` : ''}`;
+
+  // Rumusnya harus sama persis dengan backend agar angka di kasir = angka di nota.
+  //  - inclusive : harga menu sudah termasuk pajak -> pajak dikeluarkan dari dalamnya
+  //  - exclusive : pajak ditambahkan di atas harga menu
+  const cartTax = taxPercentage > 0
+    ? (taxInclusive
+        ? Math.round(cartGross * taxPercentage / (100 + taxPercentage))
+        : Math.round(cartGross * taxPercentage / 100))
+    : 0;
+
+  // cartTotal = nilai sebelum pajak (DPP). Dipakai untuk HPP/laba.
+  const cartTotal = taxInclusive ? cartGross - cartTax : cartGross;
+  // cartGrandTotal = yang ditagih ke pelanggan.
+  const cartGrandTotal = taxInclusive ? cartGross : cartGross + cartTax;
   const cartCogs = cart.reduce((sum, item) => sum + ((item.menuItem.cogs || 0) * item.quantity), 0);
+  // Pajak bukan pendapatan toko, jadi laba tetap dihitung dari nilai sebelum pajak.
   const cartProfit = cartTotal - cartCogs;
 
   const pollOrderWaPointsStatus = (orderId: number) => {
@@ -929,7 +974,7 @@ export default function POSPage() {
           </div>
           <div class="flex justify-between items-center text-lg font-bold border-t border-gray-300 dark:border-gray-600 pt-2 mt-2">
             <span>Total Tagihan:</span>
-            <span class="text-primary">${formatCurrency(cartTotal)}</span>
+            <span class="text-primary">${formatCurrency(cartGrandTotal)}</span>
           </div>
           ${paymentStatus === 'paid' && !editingOrderId && !addToOrderId ? `
             <div class="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg mt-3 text-sm">
@@ -1280,8 +1325,70 @@ export default function POSPage() {
     setTimeout(doPrint, 1000);
   };
 
+  /**
+   * Item yang masuk nota dapur: kalau ini cetakan tambahan, hanya item tambahan;
+   * selain itu seluruh item pesanan.
+   */
+  const kitchenReceiptItems: any[] = addedItemsForPrint.length > 0
+    ? addedItemsForPrint.map((c: any) => ({ ...c, menu_item: c.menuItem }))
+    : ((currentOrder?.items as any[]) ?? []);
+
+  /** Grup kategori dapur pada nota ini (urut sesuai pengaturan di halaman Menu). */
+  const kitchenReceiptGroups = groupByKitchenCategory(
+    kitchenReceiptItems,
+    (it: any) => it.menu_item,
+  );
+
+  /**
+   * Item setelah difilter per bagian dapur. Dipakai oleh preview DAN hasil cetak
+   * supaya yang terlihat di layar persis sama dengan yang keluar di printer.
+   */
+  const kitchenItemsToPrint: any[] = kitchenPrintFilter === 'all'
+    ? kitchenReceiptItems
+    : (kitchenReceiptGroups.find(g => g.key === kitchenPrintFilter)?.items ?? []);
+
+  /** Grup bagian dapur yang sedang dipilih (null = semua). */
+  const kitchenSelectedGroup = kitchenPrintFilter === 'all'
+    ? null
+    : (kitchenReceiptGroups.find(g => g.key === kitchenPrintFilter) ?? null);
+
+  /** Nama bagian yang sedang dipilih, untuk dicetak di kepala nota. */
+  const kitchenFilterLabel = kitchenSelectedGroup?.name ?? null;
+
+  /** Kategori yang masuk bagian terpilih, sebagai keterangan di kepala nota. */
+  const kitchenFilterCategories = kitchenSelectedGroup?.categoryNames ?? [];
+
   const handlePrint = () => {
+    // Cegah nota kosong tercetak bila bagian yang dipilih tidak punya item.
+    if (receiptMode === 'kitchen' && kitchenItemsToPrint.length === 0) {
+      toast.error('Tidak ada item di bagian ini untuk dicetak');
+      return;
+    }
     printReceipt();
+  };
+
+  /**
+   * Cetak tiap bagian dapur sebagai nota terpisah, satu per satu.
+   *
+   * Dipakai saat tiap bagian (Bakso, Nasi Goreng, ...) butuh kertasnya sendiri.
+   * React perlu sempat me-render ulang isi nota di antara dua panggilan print,
+   * jadi tiap bagian dijeda sebentar sebelum dialog cetak berikutnya dibuka.
+   */
+  const handlePrintPerSection = async () => {
+    const groups = kitchenReceiptGroups;
+    if (groups.length === 0) return;
+
+    for (const group of groups) {
+      if (group.items.length === 0) continue;
+      setKitchenPrintFilter(group.key);
+      // Beri waktu React menuliskan isi nota bagian ini sebelum dicetak.
+      await new Promise(resolve => setTimeout(resolve, 350));
+      printReceipt();
+      // Jeda supaya dialog cetak bawaan browser tidak saling menimpa.
+      await new Promise(resolve => setTimeout(resolve, 700));
+    }
+
+    setKitchenPrintFilter('all');
   };
 
   if (authLoading) {
@@ -1398,18 +1505,105 @@ export default function POSPage() {
                                 {order.payment_status === 'paid' ? 'LUNAS' : 'PENDING'}
                               </span>
                             </div>
-                            <div className="space-y-1 mb-3">
-                              {order.items.map((item, idx) => (
-                                <div key={idx} className="text-sm flex justify-between text-muted-foreground">
-                                  <span>{item.quantity}x {item.menu_item.name}</span>
-                                  <span>{formatCurrency(item.price * item.quantity)}</span>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="flex justify-between font-bold pt-2 border-t border-border">
-                              <span>Total</span>
-                              <span>{formatCurrency(order.total)}</span>
-                            </div>
+                            {(() => {
+                              // Pajak per item dihitung proporsional dari tarif pesanan ini
+                              // (tarif di-snapshot saat transaksi, jadi nota lama tetap benar).
+                              const taxPct = Number(order.tax_percentage ?? 0);
+                              const taxIncl = !!(order as any).tax_inclusive;
+                              // Jumlah harga menu apa adanya (pada mode inclusive nilai ini
+                              // sudah mengandung pajak).
+                              const itemsGross = order.items.reduce(
+                                (sum, it) => sum + Number(it.price) * Number(it.quantity), 0,
+                              );
+                              // Pajak pesanan diambil apa adanya dari server agar cocok dengan
+                              // tagihan; kalau belum ada, dihitung dari tarifnya.
+                              const orderTax = Number(order.tax_amount ?? 0)
+                                || (taxPct > 0
+                                    ? (taxIncl
+                                        ? Math.round(itemsGross * taxPct / (100 + taxPct))
+                                        : Math.round(itemsGross * taxPct / 100))
+                                    : 0);
+                              // Yang ditampilkan sebagai "Total Item" selalu nilai SEBELUM pajak,
+                              // supaya Item + Pajak = Total Bayar di kedua mode.
+                              const itemsTotal = taxIncl ? itemsGross - orderTax : itemsGross;
+                              const deliveryFee = Number((order as any).delivery_fee ?? 0);
+
+                              return (
+                                <>
+                                  <div className="space-y-2 mb-3">
+                                    {order.items.map((item, idx) => {
+                                      const lineTotal = Number(item.price) * Number(item.quantity);
+                                      const variantNote = formatItemNote(item.note, item.menu_item?.name);
+                                      return (
+                                        <div key={idx} className="text-sm border-b border-border/50 last:border-0 pb-2 last:pb-0">
+                                          <div className="flex justify-between gap-3">
+                                            <div className="min-w-0 flex-1">
+                                              <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="font-medium">
+                                                  {item.quantity}x {item.menu_item?.name || 'Item'}
+                                                </span>
+                                                {item.is_takeaway && (
+                                                  <span className="text-[10px] font-semibold px-1 py-0.5 rounded bg-muted text-muted-foreground">
+                                                    Bungkus
+                                                  </span>
+                                                )}
+                                                {item.menu_item?.kitchen_category && (
+                                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${kitchenColorClasses(item.menu_item.kitchen_category.color).badge}`}>
+                                                    {item.menu_item.kitchen_category.name}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              {/* Variasi & catatan pesanan */}
+                                              {variantNote && (
+                                                <p className="text-xs text-muted-foreground italic mt-0.5">
+                                                  {variantNote}
+                                                </p>
+                                              )}
+                                              <p className="text-xs text-muted-foreground mt-0.5">
+                                                {formatCurrency(item.price)} x {item.quantity}
+                                              </p>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                              <p className="font-semibold">{formatCurrency(lineTotal)}</p>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+
+                                  {/* Dua total: murni item, dan setelah pajak */}
+                                  <div className="pt-2 border-t border-border space-y-1">
+                                    <div className="flex justify-between text-sm">
+                                      <span className="text-muted-foreground">Total Item (tanpa pajak)</span>
+                                      <span className="font-semibold">{formatCurrency(itemsTotal)}</span>
+                                    </div>
+                                    {deliveryFee > 0 && (
+                                      <div className="flex justify-between text-sm">
+                                        <span className="text-muted-foreground">Ongkir</span>
+                                        <span className="font-semibold">{formatCurrency(deliveryFee)}</span>
+                                      </div>
+                                    )}
+                                    {orderTax > 0 && (
+                                      <div className="flex justify-between text-sm text-amber-600">
+                                        <span>
+                                          Total {storeInfo.tax_name || 'Pajak'}
+                                          {taxPct > 0 && ` (${parseFloat(taxPct.toFixed(2))}%)`}
+                                          <span className="block text-[10px] text-muted-foreground font-normal leading-tight">
+                                            tambahan dari harga menu
+                                          </span>
+                                        </span>
+                                        <span className="font-semibold">{formatCurrency(orderTax)}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between font-bold text-base pt-1 border-t border-border">
+                                      <span>Total Bayar</span>
+                                      <span>{formatCurrency(order.total)}</span>
+                                    </div>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
                           <div className="flex items-center justify-end gap-2">
                             <button
@@ -2179,8 +2373,13 @@ export default function POSPage() {
                             {getCategoryIcon(item.category)}
                           </div>
                           <h3 className="font-medium text-sm line-clamp-2">{item.name}</h3>
-                          <div className="flex items-center gap-1 mt-1">
+                          <div className="flex items-center gap-1 mt-1 flex-wrap">
                             <p className="text-xs text-muted-foreground">{item.category}</p>
+                            {item.kitchen_category && (
+                              <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded border ${kitchenColorClasses(item.kitchen_category.color).badge}`}>
+                                {item.kitchen_category.name}
+                              </span>
+                            )}
                             {item.status && (
                               <span className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${item.status === 'ready' ? 'bg-success/10 text-success' :
                                 item.status === 'kosong' ? 'bg-destructive/10 text-destructive' :
@@ -2454,6 +2653,11 @@ export default function POSPage() {
                       <div className="flex-1">
                         <h4 className="font-medium text-sm flex items-center gap-1.5 flex-wrap">
                           {item.menuItem.name}
+                          {item.menuItem.kitchen_category && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${kitchenColorClasses(item.menuItem.kitchen_category.color).badge}`}>
+                              {item.menuItem.kitchen_category.name}
+                            </span>
+                          )}
                           {item.is_bonus && (
                             <span className="px-1.5 py-0.5 rounded bg-green-600 text-white text-[10px] font-bold uppercase">🎁 Bonus</span>
                           )}
@@ -2686,9 +2890,33 @@ export default function POSPage() {
                         </button>
                       </div>
                       )}
-                      <span className={`font-semibold ${item.is_bonus ? 'text-green-700' : ''}`}>
-                        {item.is_bonus ? 'GRATIS' : formatCurrency((getDiscountedPrice(item.menuItem) + Number(item.variant_price || 0)) * item.quantity)}
-                      </span>
+                      {(() => {
+                        const lineGross = (getDiscountedPrice(item.menuItem) + Number(item.variant_price || 0)) * item.quantity;
+                        // Pajak adalah TAMBAHAN di atas harga menu, jadi nilai akhir
+                        // tiap baris = harga menu + pajaknya.
+                        const lineWithTax = taxPercentage > 0
+                          ? lineGross + Math.round(lineGross * taxPercentage / 100)
+                          : lineGross;
+                        return (
+                          <div className="text-right">
+                            <span className={`font-semibold ${item.is_bonus ? 'text-green-700' : ''}`}>
+                              {item.is_bonus ? 'GRATIS' : formatCurrency(lineGross)}
+                            </span>
+                            {/* Nilai setelah pajak, supaya kasir langsung tahu tagihan baris ini */}
+                            {!item.is_bonus && taxPercentage > 0 && (
+                              <span className="block text-[10px] text-amber-600 font-semibold leading-tight">
+                                {formatCurrency(lineWithTax)} <span className="font-normal opacity-80">+pajak</span>
+                              </span>
+                            )}
+                            {/* HPP per baris: modal item ini (HPP satuan x jumlah) */}
+                            {Number(item.menuItem.cogs) > 0 && (
+                              <span className="block text-[10px] text-warning leading-tight">
+                                HPP {formatCurrency(Number(item.menuItem.cogs) * item.quantity)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )
@@ -2699,23 +2927,34 @@ export default function POSPage() {
           {/* Cart Summary */}
           {cart.length > 0 && (
             <div className="p-3 md:p-4 border-t border-border bg-secondary/30">
-              <div className="space-y-1 md:space-y-2 mb-2 md:mb-4">
+              {/* Analisa modal keranjang: penjualan tanpa pajak, HPP, dan laba kotor.
+                  Pajak tidak masuk hitungan karena bukan pendapatan toko. */}
+              <div className="space-y-1 md:space-y-2 mb-2 md:mb-4 rounded-lg bg-background/50 border border-border p-2.5">
                 <div className="flex justify-between text-xs md:text-sm">
-                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="text-muted-foreground">Penjualan (tanpa pajak)</span>
                   <span>{formatCurrency(cartTotal)}</span>
                 </div>
                 <div className="flex justify-between text-xs md:text-sm">
-                  <span className="text-muted-foreground">HPP</span>
+                  <span className="text-muted-foreground">HPP / Modal</span>
                   <span className="text-warning">{formatCurrency(cartCogs)}</span>
                 </div>
-                <div className="flex justify-between text-xs md:text-sm font-semibold">
-                  <span>Profit</span>
-                  <span className="text-success">{formatCurrency(cartProfit)}</span>
+                <div className="flex justify-between text-xs md:text-sm font-semibold border-t border-border pt-1.5">
+                  <span>Laba Kotor</span>
+                  <span className="text-success">
+                    {formatCurrency(cartProfit)}
+                    {cartTotal > 0 && (
+                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                        ({((cartProfit / cartTotal) * 100).toFixed(1)}%)
+                      </span>
+                    )}
+                  </span>
                 </div>
               </div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium">Subtotal</span>
-                <span className="font-semibold">{formatCurrency(cartItemsTotal)}</span>
+                <span className="text-sm font-medium">Subtotal Item</span>
+                <span className="font-semibold">
+                  {formatCurrency(taxInclusive ? cartTotal : cartItemsTotal)}
+                </span>
               </div>
               {orderType === 'delivery' && deliveryInfo && (
                 <div className="flex items-center justify-between mb-1 text-blue-400">
@@ -2723,13 +2962,24 @@ export default function POSPage() {
                   <span className="font-semibold">{formatCurrency(deliveryInfo.delivery_fee)}</span>
                 </div>
               )}
+              {cartTax > 0 && (
+                <>
+                  <div className="flex items-center justify-between mb-0.5 text-amber-600">
+                    <span className="text-sm flex items-center gap-1"><Receipt className="w-3.5 h-3.5" /> {taxLabel}</span>
+                    <span className="font-semibold">{formatCurrency(cartTax)}</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mb-1 leading-tight">
+                    Pajak ditambahkan di atas harga menu
+                  </p>
+                </>
+              )}
               <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
                 <span className="font-bold text-sm">Total</span>
-                <span className="text-xl md:text-2xl font-bold">{formatCurrency(cartTotal)}</span>
+                <span className="text-xl md:text-2xl font-bold">{formatCurrency(cartGrandTotal)}</span>
               </div>
               {selectedMember && !editingOrderId && !addToOrderId && (
                 <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-0.5">
-                  <p>+<strong>{Math.floor(cartTotal / 10000)}</strong> poin akan didapat dari transaksi ini</p>
+                  <p>+<strong>{Math.floor(cartGrandTotal / 10000)}</strong> poin akan didapat dari transaksi ini</p>
                   {selectedReward && <p className="text-green-700">Redeem: -{selectedReward.points_required} poin untuk <strong>{selectedReward.name}</strong></p>}
                 </div>
               )}
@@ -2773,7 +3023,13 @@ export default function POSPage() {
               <DialogTitle className="font-display text-center">Pembayaran</DialogTitle>
             </DialogHeader>
             <div className="py-4">
-              <p className="text-center text-3xl font-bold mb-6">{formatCurrency(cartTotal)}</p>
+              <p className="text-center text-3xl font-bold mb-1">{formatCurrency(cartGrandTotal)}</p>
+              {cartTax > 0 && (
+                <p className="text-center text-xs text-muted-foreground mb-5">
+                  Subtotal {formatCurrency(cartTotal)} + {taxLabel} {formatCurrency(cartTax)}
+                </p>
+              )}
+              {cartTax <= 0 && <div className="mb-5" />}
 
               <p className="text-sm text-muted-foreground mb-3">Tipe Pesanan</p>
               <div className="grid grid-cols-3 gap-3 mb-6">
@@ -2953,17 +3209,17 @@ export default function POSPage() {
                     onChange={(e) => setPaidAmount(e.target.value)}
                     className="input-coffee text-lg"
                   />
-                  {paidAmount && parseFloat(paidAmount) >= cartTotal && (
+                  {paidAmount && parseFloat(paidAmount) >= cartGrandTotal && (
                     <div className="mt-3 p-3 bg-success/10 rounded-lg">
                       <div className="flex justify-between items-center">
                         <span className="text-sm font-medium">Kembalian:</span>
                         <span className="text-lg font-bold text-success">
-                          {formatCurrency(parseFloat(paidAmount) - cartTotal)}
+                          {formatCurrency(parseFloat(paidAmount) - cartGrandTotal)}
                         </span>
                       </div>
                     </div>
                   )}
-                  {paidAmount && parseFloat(paidAmount) < cartTotal && (
+                  {paidAmount && parseFloat(paidAmount) < cartGrandTotal && (
                     <p className="text-sm text-destructive mt-2">Uang tidak cukup</p>
                   )}
                 </div>
@@ -3003,7 +3259,7 @@ export default function POSPage() {
                 <button
                   className="btn-primary py-4 text-lg font-semibold flex items-center justify-center gap-2"
                   onClick={() => handleCheckout('paid')}
-                  disabled={paymentMethod === 'cash' && paidAmount && parseFloat(paidAmount) < cartTotal}
+                  disabled={paymentMethod === 'cash' && paidAmount && parseFloat(paidAmount) < cartGrandTotal}
                 >
                   <Check className="w-5 h-5" />
                   {editingOrderId ? 'Simpan Perubahan' : 'Bayar Sekarang'}
@@ -3014,7 +3270,14 @@ export default function POSPage() {
         </Dialog>
 
         {/* Receipt Dialog */}
-        <Dialog open={showReceipt} onOpenChange={setShowReceipt}>
+        <Dialog
+          open={showReceipt}
+          onOpenChange={(open) => {
+            setShowReceipt(open);
+            // Filter per bagian dapur selalu mulai dari "Semua" di nota berikutnya.
+            if (!open) setKitchenPrintFilter('all');
+          }}
+        >
           <DialogContent className="sm:max-w-md">
             <div className="flex justify-center gap-2 mb-2 bg-secondary/50 p-1 rounded-lg">
               <button
@@ -3031,12 +3294,68 @@ export default function POSPage() {
               </button>
             </div>
 
+            {/* Pilih bagian dapur yang dicetak — mis. hanya Nasi Goreng atau hanya Bakso.
+                Hanya berguna kalau nota ini memang berisi lebih dari satu bagian. */}
+            {receiptMode === 'kitchen' && kitchenReceiptGroups.length > 1 && (
+              <div className="mb-2">
+                <p className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <ChefHat className="w-3 h-3" /> Cetak bagian:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    onClick={() => setKitchenPrintFilter('all')}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
+                      kitchenPrintFilter === 'all'
+                        ? 'bg-foreground text-background border-foreground'
+                        : 'bg-secondary text-secondary-foreground border-transparent hover:bg-secondary/70'
+                    }`}
+                  >
+                    Semua ({kitchenReceiptItems.reduce((n: number, it: any) => n + Number(it.quantity || 0), 0)})
+                  </button>
+                  {kitchenReceiptGroups.map((group) => {
+                    const cls = kitchenColorClasses(group.color);
+                    const active = kitchenPrintFilter === group.key;
+                    const qty = group.items.reduce((n: number, it: any) => n + Number(it.quantity || 0), 0);
+                    return (
+                      <button
+                        key={group.key}
+                        onClick={() => setKitchenPrintFilter(group.key)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
+                          active ? `${cls.header} border-transparent` : cls.badge
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-white/80' : cls.dot}`} />
+                        {group.name} ({qty})
+                        {group.categoryNames.length > 0 && (
+                          <span className="font-normal opacity-75">
+                            · {group.categoryNames.join(', ')}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div id="receipt-preview" className="p-0">
               {receiptMode === 'kitchen' ? (
                 // KITCHEN RECEIPT PREVIEW
                 <div className="p-2 font-mono">
                   <div className="text-center mb-3 pb-2 border-b-2 border-dashed border-black">
                     <h2 className="text-xl font-bold">DAPUR</h2>
+                    {kitchenFilterLabel && (
+                      <div className="border-2 border-black inline-block px-2 py-0.5 mt-1">
+                        <p className="text-base font-bold uppercase tracking-wide leading-tight">
+                          {kitchenFilterLabel}
+                        </p>
+                        {kitchenFilterCategories.length > 0 && (
+                          <p className="text-[9px] uppercase leading-tight">
+                            {kitchenFilterCategories.join(' · ')}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {currentOrder && (
                       <>
                         <p className="text-lg font-bold">#{currentOrder.daily_number || currentOrder.id}</p>
@@ -3059,7 +3378,16 @@ export default function POSPage() {
                   </div>
 
                   <div className="space-y-4">
-                    {currentOrder?.items.map((item, idx) => {
+                    {/* Dikelompokkan per kategori dapur supaya tiap bagian langsung
+                        mengenali pesanannya. Header pakai garis tebal (bukan warna)
+                        agar tetap jelas di printer termal hitam-putih. */}
+                    {(() => {
+                      // Ikuti pilihan "Cetak bagian" supaya preview = hasil cetak.
+                      const kitchenGroups = groupByKitchenCategory(
+                        kitchenItemsToPrint,
+                        (it: any) => it.menu_item,
+                      );
+                      const renderKitchenItem = (item: any, idx: number) => {
                       // Parse note to extract variant and user note
                       const noteText = (item as any).note || '';
                       const variantMatch = noteText.match(/Kuah: ([^.]+)/);
@@ -3095,7 +3423,50 @@ export default function POSPage() {
                           </div>
                         </div>
                       )
-                    })}
+                      };
+
+                      if (!shouldShowGroups(kitchenGroups)) {
+                        return kitchenItemsToPrint.map(renderKitchenItem);
+                      }
+
+                      return kitchenGroups.map((group) => (
+                        <div key={group.key}>
+                          <div className="border-y-2 border-black bg-black text-white px-1.5 py-0.5 mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-sm uppercase tracking-wide">{group.name}</span>
+                              <span className="ml-auto font-bold text-sm tabular-nums">
+                                {group.items.reduce((n: number, it: any) => n + Number(it.quantity || 0), 0)} item
+                              </span>
+                            </div>
+                            {/* Kategori yang masuk grup warna ini */}
+                            {group.categoryNames.length > 0 && (
+                              <p className="text-[9px] uppercase leading-tight opacity-90">
+                                {group.categoryNames.join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                          {/* Walau warnanya sama, tiap kategori tetap dipisah dengan
+                              sub-judul supaya batas jenis masakan tetap jelas. */}
+                          <div className="space-y-3 pl-0.5">
+                            {groupByKitchenCategoryName(group.items, (it: any) => it.menu_item).map(sub => (
+                              <div key={sub.key}>
+                                {group.categoryNames.length > 1 && (
+                                  <p className="text-[10px] font-bold uppercase tracking-wide border-b border-black/40 mb-1 pb-0.5">
+                                    {sub.name}
+                                    <span className="float-right tabular-nums">
+                                      {sub.items.reduce((n: number, it: any) => n + Number(it.quantity || 0), 0)}
+                                    </span>
+                                  </p>
+                                )}
+                                <div className="space-y-3">
+                                  {sub.items.map(renderKitchenItem)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ));
+                    })()}
                   </div>
                 </div>
               ) : (
@@ -3163,10 +3534,19 @@ export default function POSPage() {
                                 {item.is_takeaway && <span className="text-[9px] uppercase font-normal border border-black px-0.5 rounded-sm">Bungkus</span>}
                               </div>
                               {item.note && <div className="italic text-[9px] mb-0.5">- {formatItemNote(item.note, item.menu_item.name)}</div>}
-                              <div className="flex justify-between">
-                                <span>{item.quantity} x {formatCurrency(item.price)}</span>
-                                <span className="font-semibold">{formatCurrency(item.quantity * item.price)}</span>
-                              </div>
+                              {(() => {
+                                // Tampilkan harga per item sudah termasuk pajak, supaya
+                                // pelanggan tidak bingung kenapa TOTAL lebih besar dari
+                                // jumlah harga yang tertera di sini.
+                                const pct = Number((currentOrder as any).tax_percentage ?? 0);
+                                const line = item.quantity * item.price;
+                                const unitTaxed = pct > 0 ? item.price + Math.round(item.price * pct / 100) : item.price;
+                                const lineTaxed = pct > 0 ? line + Math.round(line * pct / 100) : line;
+                                return <div className="flex justify-between">
+                                      <span>{item.quantity} x {formatCurrency(unitTaxed)}</span>
+                                      <span className="font-semibold">{formatCurrency(lineTaxed)}</span>
+                                    </div>;
+                              })()}
                             </div>
                           );
                         })}
@@ -3191,6 +3571,22 @@ export default function POSPage() {
                               <span>{formatCurrency((currentOrder as any).delivery_fee)}</span>
                             </div>
                             <div className="border-t border-dashed border-black/30 my-0.5" />
+                          </>
+                        )}
+                        {Number((currentOrder as any).tax_amount) > 0 && (
+                          <>
+                            <div className="flex justify-between">
+                              <span>Subtotal (harga menu)</span>
+                              <span>{formatCurrency((currentOrder as any).subtotal ?? currentOrder.total)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>{receiptTaxLabel(currentOrder)}</span>
+                              <span>{formatCurrency((currentOrder as any).tax_amount)}</span>
+                            </div>
+                            {/* Tegaskan pajak adalah tambahan, bukan potongan dari harga menu */}
+                            <p className="text-[9px] italic leading-tight">
+                              * Harga per item di atas sudah termasuk pajak
+                            </p>
                           </>
                         )}
                         <div className="flex justify-between font-bold text-xs">
@@ -3244,23 +3640,36 @@ export default function POSPage() {
               )}
             </div>
 
-            <div className="flex gap-3 px-6 pb-6 mt-4">
-              <button
-                className="btn-outline flex-1"
-                onClick={() => {
-                  setShowReceipt(false);
-                  setAddedItemsForPrint([]); // Clear added items state
-                }}
-              >
-                Tutup
-              </button>
-              <button
-                className="btn-primary flex-1 flex items-center justify-center gap-2"
-                onClick={handlePrint}
-              >
-                <Printer className="w-4 h-4" />
-                Print
-              </button>
+            <div className="px-6 pb-6 mt-4 space-y-2">
+              {/* Cetak tiap bagian dapur sebagai nota terpisah (satu kertas per bagian) */}
+              {receiptMode === 'kitchen' && kitchenReceiptGroups.length > 1 && (
+                <button
+                  className="btn-outline w-full flex items-center justify-center gap-2 text-sm"
+                  onClick={handlePrintPerSection}
+                >
+                  <ChefHat className="w-4 h-4" />
+                  Cetak Terpisah ({kitchenReceiptGroups.length} bagian)
+                </button>
+              )}
+              <div className="flex gap-3">
+                <button
+                  className="btn-outline flex-1"
+                  onClick={() => {
+                    setShowReceipt(false);
+                    setAddedItemsForPrint([]); // Clear added items state
+                    setKitchenPrintFilter('all');
+                  }}
+                >
+                  Tutup
+                </button>
+                <button
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                  onClick={handlePrint}
+                >
+                  <Printer className="w-4 h-4" />
+                  {receiptMode === 'kitchen' && kitchenFilterLabel ? `Print ${kitchenFilterLabel}` : 'Print'}
+                </button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
@@ -3273,6 +3682,22 @@ export default function POSPage() {
           <div className="p-1 font-mono">
             <div className="text-center mb-3 pb-2 border-b-2 border-dashed border-black">
               <h2 className="text-xl font-bold">DAPUR {addedItemsForPrint.length > 0 ? '(TAMBAHAN)' : ''}</h2>
+              {/* Nama bagian dicetak besar supaya nota tidak tertukar antar bagian dapur */}
+              {kitchenFilterLabel && (
+                <div
+                  className="border-2 border-black inline-block px-2 py-0.5 mt-1"
+                  style={{ WebkitPrintColorAdjust: 'exact' }}
+                >
+                  <p className="text-base font-bold uppercase tracking-wide leading-tight">
+                    {kitchenFilterLabel}
+                  </p>
+                  {kitchenFilterCategories.length > 0 && (
+                    <p className="text-[9px] uppercase leading-tight">
+                      {kitchenFilterCategories.join(' · ')}
+                    </p>
+                  )}
+                </div>
+              )}
               <p className="text-lg font-bold">#{currentOrder.daily_number || currentOrder.id}</p>
               <p className="uppercase text-sm font-bold mt-1">
                 {(currentOrder as any).order_type === 'dine_in' ? 'DINE IN' : 'TAKEAWAY'}
@@ -3291,7 +3716,13 @@ export default function POSPage() {
             </div>
             <div className="space-y-4">
               {/* If addedItemsForPrint exists, ONLY print those. Else print all? Usually updates print diff. */}
-              {(addedItemsForPrint.length > 0 ? addedItemsForPrint.map((c: any) => ({ ...c, menu_item: c.menuItem })) : currentOrder.items).map((item, idx) => {
+              {(() => {
+              // Hanya item dari bagian dapur yang dipilih (lihat "Cetak bagian").
+              const printItems: any[] = kitchenItemsToPrint;
+              // Dikelompokkan per kategori dapur; header pakai blok hitam-putih
+              // supaya tetap terbaca jelas di printer termal.
+              const kitchenGroups = groupByKitchenCategory(printItems, (it: any) => it.menu_item);
+              const renderPrintItem = (item: any, idx: number) => {
                 // Parse note to extract variant and user note
                 const noteText = (item as any).note || '';
                 const variantMatch = noteText.match(/Kuah: ([^.]+)/);
@@ -3326,7 +3757,52 @@ export default function POSPage() {
                     </div>
                   </div>
                 )
-              })}
+              };
+
+              if (!shouldShowGroups(kitchenGroups)) {
+                return printItems.map(renderPrintItem);
+              }
+
+              return kitchenGroups.map((group) => (
+                <div key={group.key}>
+                  <div
+                    className="border-y-2 border-black bg-black text-white px-1.5 py-0.5 mb-2 print:bg-black print:text-white"
+                    style={{ WebkitPrintColorAdjust: 'exact' }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-sm uppercase tracking-wide">{group.name}</span>
+                      <span className="ml-auto font-bold text-sm tabular-nums">
+                        {group.items.reduce((n: number, it: any) => n + Number(it.quantity || 0), 0)} item
+                      </span>
+                    </div>
+                    {group.categoryNames.length > 0 && (
+                      <p className="text-[9px] uppercase leading-tight">
+                        {group.categoryNames.join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                  {/* Walau warnanya sama, tiap kategori tetap dipisah dengan
+                      sub-judul supaya batas jenis masakan tetap jelas. */}
+                  <div className="space-y-3">
+                    {groupByKitchenCategoryName(group.items, (it: any) => it.menu_item).map(sub => (
+                      <div key={sub.key}>
+                        {group.categoryNames.length > 1 && (
+                          <p className="text-[10px] font-bold uppercase tracking-wide border-b border-black/40 mb-1 pb-0.5">
+                            {sub.name}
+                            <span className="float-right tabular-nums">
+                              {sub.items.reduce((n: number, it: any) => n + Number(it.quantity || 0), 0)}
+                            </span>
+                          </p>
+                        )}
+                        <div className="space-y-3">
+                          {sub.items.map(renderPrintItem)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ));
+              })()}
             </div>
           </div>
         ) : currentOrder && (
@@ -3395,10 +3871,16 @@ export default function POSPage() {
                       {item.is_takeaway && <span className="text-[9px] uppercase font-normal border border-black px-0.5 rounded-sm">Bungkus</span>}
                     </div>
                     {item.note && <div className="italic text-[9px] mb-0.5">- {formatItemNote(item.note, item.menu_item.name)}</div>}
-                    <div className="flex justify-between">
-                      <span>{item.quantity} x {isBonusItem ? 'TUKAR POIN' : formatCurrency(item.price)}</span>
-                      <span className="font-semibold">{isBonusItem ? 'GRATIS' : formatCurrency(item.quantity * item.price)}</span>
-                    </div>
+                    {(() => {
+                      const pct = Number((currentOrder as any).tax_percentage ?? 0);
+                      const line = item.quantity * item.price;
+                      const unitTaxed = pct > 0 ? item.price + Math.round(item.price * pct / 100) : item.price;
+                      const lineTaxed = pct > 0 ? line + Math.round(line * pct / 100) : line;
+                      return <div className="flex justify-between">
+                            <span>{item.quantity} x {isBonusItem ? 'TUKAR POIN' : formatCurrency(unitTaxed)}</span>
+                            <span className="font-semibold">{isBonusItem ? 'GRATIS' : formatCurrency(lineTaxed)}</span>
+                          </div>;
+                    })()}
                   </div>
                 );
               })}
@@ -3429,6 +3911,22 @@ export default function POSPage() {
                   <span>Tukar Poin (Bonus)</span>
                   <span className="font-semibold">-{(currentOrder as any).points_redeemed} poin</span>
                 </div>
+              )}
+              {Number((currentOrder as any).tax_amount) > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span>Subtotal (harga menu)</span>
+                    <span>{formatCurrency((currentOrder as any).subtotal ?? currentOrder.total)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>{receiptTaxLabel(currentOrder)}</span>
+                    <span>{formatCurrency((currentOrder as any).tax_amount)}</span>
+                  </div>
+                  {/* Tegaskan pajak adalah tambahan, bukan potongan dari harga menu */}
+                  <p className="text-[9px] italic leading-tight">
+                    * Harga per item di atas sudah termasuk pajak
+                  </p>
+                </>
               )}
               <div className="flex justify-between font-bold text-xs">
                 <span>TOTAL</span>

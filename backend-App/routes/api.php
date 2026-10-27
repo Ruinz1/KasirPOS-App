@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\InventoryReportController;
 use App\Http\Controllers\Api\InventoryOverheadController;
 use App\Http\Controllers\Api\MenuController;
+use App\Http\Controllers\Api\KitchenCategoryController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\CapitalController;
@@ -58,6 +59,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/inventory/overheads/{overhead}', [InventoryOverheadController::class, 'destroy']);
 
     // Menu routes (all authenticated users can view, only admin/owner can modify)
+    // Kategori dapur (Bakso, Nasi Goreng, dst) — pengelompokan nota dapur & antrian
+    Route::get('/kitchen-categories', [KitchenCategoryController::class, 'index']);
+    Route::post('/kitchen-categories', [KitchenCategoryController::class, 'store']);
+    Route::put('/kitchen-categories/{id}', [KitchenCategoryController::class, 'update']);
+    Route::delete('/kitchen-categories/{id}', [KitchenCategoryController::class, 'destroy']);
+
     Route::get('/menu', [MenuController::class, 'index']);
     Route::get('/menu/{menuItem}', [MenuController::class, 'show']);
     Route::post('/menu', [MenuController::class, 'store']);

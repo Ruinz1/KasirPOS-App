@@ -24,6 +24,10 @@ class Store extends Model
         'queue_enabled',
         'parking_checkout_enabled',
         'daily_target',
+        'tax_enabled',
+        'tax_percentage',
+        'tax_name',
+        'tax_inclusive',
     ];
 
     protected $casts = [
@@ -37,7 +41,72 @@ class Store extends Model
         'queue_enabled' => 'boolean',
         'parking_checkout_enabled' => 'boolean',
         'daily_target' => 'integer',
+        'tax_enabled' => 'boolean',
+        'tax_percentage' => 'float',
+        'tax_inclusive' => 'boolean',
     ];
+
+    /**
+     * Tarif pajak efektif toko (persen). 0 bila pajak dimatikan.
+     */
+    public function effectiveTaxPercentage(): float
+    {
+        if (!$this->tax_enabled) {
+            return 0.0;
+        }
+        return max(0.0, (float)($this->tax_percentage ?? 0));
+    }
+
+    /**
+     * Hitung nilai pajak dari nilai sebelum pajak (subtotal).
+     * Dibulatkan ke rupiah terdekat agar nota tidak menampilkan pecahan sen.
+     *
+     * Hanya dipakai pada mode exclusive (harga menu belum termasuk pajak).
+     * Untuk mode inclusive gunakan extractTax().
+     */
+    public function calculateTax(float $subtotal): float
+    {
+        $percentage = $this->effectiveTaxPercentage();
+        if ($percentage <= 0 || $subtotal <= 0) {
+            return 0.0;
+        }
+        return round($subtotal * $percentage / 100);
+    }
+
+    /**
+     * Mode pajak: harga menu sudah termasuk pajak atau belum.
+     */
+    public function isTaxInclusive(): bool
+    {
+        return (bool) $this->tax_inclusive;
+    }
+
+    /**
+     * Keluarkan nilai pajak yang SUDAH terkandung di dalam sebuah harga.
+     *
+     * Mis. harga Rp 110.000 dengan PPN 10% -> pajaknya Rp 10.000 dan
+     * dasar pengenaan pajaknya Rp 100.000. Rumus: harga x p / (100 + p).
+     */
+    public function extractTax(float $grossAmount): float
+    {
+        $percentage = $this->effectiveTaxPercentage();
+        if ($percentage <= 0 || $grossAmount <= 0) {
+            return 0.0;
+        }
+        return round($grossAmount * $percentage / (100 + $percentage));
+    }
+
+    /**
+     * Label pajak untuk ditampilkan di nota, mis. "PPN 11%".
+     */
+    public function taxLabel(): string
+    {
+        $name = $this->tax_name ?: 'Pajak';
+        $percentage = $this->effectiveTaxPercentage();
+        return $percentage > 0
+            ? $name . ' ' . rtrim(rtrim(number_format($percentage, 2, '.', ''), '0'), '.') . '%'
+            : $name;
+    }
 
     /**
      * Hitung jarak Haversine (km) dari koordinat toko ke koordinat pelanggan.
@@ -96,6 +165,14 @@ class Store extends Model
     public function inventoryItems()
     {
         return $this->hasMany(InventoryItem::class);
+    }
+
+    /**
+     * Kategori dapur milik toko ini (Bakso, Nasi Goreng, dst).
+     */
+    public function kitchenCategories()
+    {
+        return $this->hasMany(KitchenCategory::class);
     }
 
     /**

@@ -16,7 +16,7 @@ class MenuController extends Controller
      */
     public function index(Request $request)
     {
-        $query = MenuItem::with(['menuIngredients.inventoryItem', 'parent']);
+        $query = MenuItem::with(['menuIngredients.inventoryItem', 'parent', 'kitchenCategory']);
 
         if ($request->has('search')) {
             $query->where('name', 'like', '%' . $request->search . '%');
@@ -24,6 +24,10 @@ class MenuController extends Controller
 
         if ($request->has('category')) {
             $query->where('category', $request->category);
+        }
+
+        if ($request->filled('kitchen_category_id')) {
+            $query->where('kitchen_category_id', $request->kitchen_category_id);
         }
 
         // Admin can filter by store_id
@@ -55,6 +59,7 @@ class MenuController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'category' => 'required|string|max:255',
+            'kitchen_category_id' => 'nullable|integer|exists:kitchen_categories,id',
             'price' => 'required|numeric|min:0',
             'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'uses_ingredients' => 'nullable|boolean',
@@ -93,6 +98,7 @@ class MenuController extends Controller
             $menuItem = MenuItem::create([
                 'name' => $validated['name'],
                 'category' => $validated['category'],
+                'kitchen_category_id' => $validated['kitchen_category_id'] ?? null,
                 'price' => $validated['price'],
                 'discount_percentage' => $validated['discount_percentage'] ?? 0,
                 'uses_ingredients' => $validated['uses_ingredients'] ?? true,
@@ -160,6 +166,7 @@ class MenuController extends Controller
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'category' => 'sometimes|string|max:255',
+            'kitchen_category_id' => 'nullable|integer|exists:kitchen_categories,id',
             'price' => 'sometimes|numeric|min:0',
             'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'uses_ingredients' => 'nullable|boolean',
@@ -189,6 +196,9 @@ class MenuController extends Controller
             $menuItem->update([
                 'name' => $validated['name'] ?? $menuItem->name,
                 'category' => $validated['category'] ?? $menuItem->category,
+                'kitchen_category_id' => array_key_exists('kitchen_category_id', $validated)
+                    ? $validated['kitchen_category_id']
+                    : $menuItem->kitchen_category_id,
                 'price' => $validated['price'] ?? $menuItem->price,
                 'discount_percentage' => $validated['discount_percentage'] ?? $menuItem->discount_percentage,
                 'uses_ingredients' => $validated['uses_ingredients'] ?? $menuItem->uses_ingredients,

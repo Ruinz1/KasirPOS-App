@@ -20,6 +20,8 @@ export interface QueueItem {
         name: string;
         price: number;
         category?: string;
+        /** Kategori dapur (Bakso, Nasi Goreng, dst) untuk pengelompokan di antrian. */
+        kitchen_category?: { id: number; name: string; color: string; sort_order: number } | null;
     } | null;
     created_at?: string;
 }
@@ -32,6 +34,9 @@ export interface QueueBatch {
     payment_method: "cash" | "card" | "qris" | null;
     payment_status: "paid" | "pending";
     subtotal: number | string;
+    tax_percentage?: number | string | null;
+    tax_amount?: number | string | null;
+    total?: number | string | null;
     paid_amount: number | string | null;
     change_amount: number | string | null;
     paid_at: string | null;

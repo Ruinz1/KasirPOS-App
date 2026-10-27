@@ -10,6 +10,7 @@ use App\Models\InventoryItem;
 use App\Models\InventoryUsageLog;
 use App\Models\Member;
 use App\Models\Table;
+use App\Models\Store;
 use App\Models\OrderItemBatch;
 use App\Jobs\SendOrderPointsWhatsAppJob;
 use Illuminate\Http\Request;
@@ -316,6 +317,13 @@ class OrderController extends Controller
              $storeId = $request->user()->store_id;
         }
 
+        // Tarif pajak toko di-snapshot ke pesanan supaya nota lama tetap benar
+        // walau tarif diubah setelah transaksi.
+        $store = $storeId ? Store::find($storeId) : null;
+        $taxPercentage = $store ? $store->effectiveTaxPercentage() : 0.0;
+        // Mode pajak ikut di-snapshot: inclusive = harga menu sudah termasuk pajak.
+        $taxInclusive = $store ? $store->isTaxInclusive() : false;
+
         // Set default payment_status if not provided
         // Jika payment_method null (Bayar Nanti), payment_status = pending
         if (empty($validated['payment_method'])) {
@@ -357,6 +365,10 @@ class OrderController extends Controller
                 'change_amount' => null, // Will be calculated after total
                 'daily_number' => $dailyNumber,
                 'total' => 0,
+                'subtotal' => 0,
+                'tax_percentage' => $taxPercentage,
+                'tax_amount' => 0,
+                'tax_inclusive' => $taxInclusive,
                 'cogs' => 0,
                 'profit' => 0,
                 'store_id' => $storeId,
@@ -432,25 +444,49 @@ class OrderController extends Controller
                 $cogs += $itemCogs;
             }
 
-            // Update order totals (termasuk ongkir untuk delivery)
+            // Update order totals (termasuk ongkir untuk delivery, lalu pajak di atasnya)
             $deliveryFee = isset($validated['delivery_fee']) ? (int)$validated['delivery_fee'] : 0;
-            $order->total = $total + $deliveryFee;
+            $gross = $total + $deliveryFee;
+
+            if ($taxInclusive) {
+                // Harga menu sudah termasuk pajak: tagihan = harga menu, pajak
+                // dikeluarkan dari dalamnya (harga x p / (100 + p)).
+                $taxAmount = $taxPercentage > 0
+                    ? round($gross * $taxPercentage / (100 + $taxPercentage))
+                    : 0;
+                $subtotal = $gross - $taxAmount;
+                $grandTotal = $gross;
+            } else {
+                // Harga menu belum termasuk pajak: pajak ditambahkan di atasnya.
+                $taxAmount = $taxPercentage > 0 ? round($gross * $taxPercentage / 100) : 0;
+                $subtotal = $gross;
+                $grandTotal = $gross + $taxAmount;
+            }
+
+            $order->subtotal = $subtotal;
+            $order->tax_percentage = $taxPercentage;
+            $order->tax_amount = $taxAmount;
+            $order->tax_inclusive = $taxInclusive;
+            $order->total = $grandTotal;
             $order->cogs = $cogs;
-            $order->profit = ($total + $deliveryFee) - $cogs;
-            
+            // Pajak bukan pendapatan toko (titipan untuk negara), jadi laba dihitung
+            // dari nilai sebelum pajak.
+            $order->profit = $subtotal - $cogs;
+
             // Set paid_amount and change_amount based on payment method
+            // Catatan: semua perhitungan pembayaran memakai $grandTotal (sudah termasuk pajak).
             if ($order->payment_method === 'qris' || $order->payment_method === 'card') {
                 // QRIS and Card: paid_amount always equals total
-                $order->paid_amount = $total;
+                $order->paid_amount = $grandTotal;
                 $order->change_amount = 0;
             } elseif ($order->payment_method === 'cash') {
                 // Cash: use provided paid_amount or default to total
                 if (!$order->paid_amount) {
-                    $order->paid_amount = $total;
+                    $order->paid_amount = $grandTotal;
                 }
                 // Calculate change if paid enough
-                if ($order->paid_amount >= $total) {
-                    $order->change_amount = $order->paid_amount - $total;
+                if ($order->paid_amount >= $grandTotal) {
+                    $order->change_amount = $order->paid_amount - $grandTotal;
                 } else {
                     $order->change_amount = 0;
                 }
@@ -787,10 +823,25 @@ class OrderController extends Controller
                 $cogs += ($menuItem->uses_ingredients ? $ingredientResult['cogs'] : $menuItem->calculateCOGS()) * $item['quantity'];
             }
 
-            // Update order details
-            $order->total = $total;
+            // Update order details. Ongkir yang sudah tercatat tetap ikut ditagih dan
+            // ikut kena pajak, lalu pajak dihitung ulang memakai tarif pesanan ini.
+            $gross = $total + (float)($order->delivery_fee ?? 0);
+
+            if ($order->tax_inclusive) {
+                $taxAmount = $order->extractTaxFrom($gross);
+                $subtotal = $gross - $taxAmount;
+                $grandTotal = $gross;
+            } else {
+                $taxAmount = $order->computeTaxOn($gross);
+                $subtotal = $gross;
+                $grandTotal = $gross + $taxAmount;
+            }
+
+            $order->subtotal = $subtotal;
+            $order->tax_amount = $taxAmount;
+            $order->total = $grandTotal;
             $order->cogs = $cogs;
-            $order->profit = $total - $cogs;
+            $order->profit = $subtotal - $cogs;
             if (isset($validated['customer_name'])) $order->customer_name = $validated['customer_name'];
             if (isset($validated['order_type'])) $order->order_type = $validated['order_type'];
 
@@ -805,12 +856,12 @@ class OrderController extends Controller
                  
                  $effectivePaid = (float)$order->paid_amount + (float)$order->second_paid_amount;
                  
-                 if ($effectivePaid < $total) {
+                 if ($effectivePaid < $grandTotal) {
                      // Total increased beyond what was paid -> Pending (Must pay difference)
                      $order->payment_status = 'pending'; 
                  } else {
                      // Still covered, update change
-                     $order->change_amount = $effectivePaid - $total;
+                     $order->change_amount = $effectivePaid - $grandTotal;
                  }
             }
 
@@ -853,7 +904,14 @@ class OrderController extends Controller
 
         DB::beginTransaction();
         try {
-            $total = $order->total;
+            // Akumulasi dari nilai KOTOR (sejumlah harga menu) supaya cara hitungnya
+            // sama untuk kedua mode pajak dan pajak tidak terhitung berganda saat
+            // pesanan ditambah berkali-kali.
+            //  - inclusive : kotor = total tagihan (harga menu sudah termasuk pajak)
+            //  - exclusive : kotor = subtotal (pajak ditambahkan belakangan)
+            $gross = $order->tax_inclusive
+                ? (float)$order->total
+                : (float)($order->subtotal ?: $order->total);
             $cogs = $order->cogs;
             $addedItems = [];
             $batchSubtotal = 0;
@@ -914,7 +972,7 @@ class OrderController extends Controller
                 }
 
                 $lineTotal = $finalPrice * $item['quantity'];
-                $total += $lineTotal;
+                $gross += $lineTotal;
                 $batchSubtotal += $lineTotal;
                 $cogs += ($menuItem->uses_ingredients ? $ingredientResult['cogs'] : $menuItem->calculateCOGS()) * $item['quantity'];
 
@@ -922,10 +980,10 @@ class OrderController extends Controller
                 $addedItems[] = $orderItem;
             }
 
-            // Update order details
-            $order->total = $total;
+            // Update order details. Pajak pesanan = pajak tagihan awal + pajak tiap
+            // batch, bukan pembulatan ulang dari gabungan, supaya total pesanan sama
+            // persis dengan jumlah uang yang benar-benar ditagih di tiap nota.
             $order->cogs = $cogs;
-            $order->profit = $total - $cogs;
 
             // Status antrian pesanan awal TIDAK diubah: batch tambahan ini punya status
             // sendiri, jadi pesanan awal yang sudah selesai tetap selesai.
@@ -933,8 +991,43 @@ class OrderController extends Controller
             // Pembayaran tambahan berdiri sendiri (BUKAN split bill): tagihannya disimpan
             // di batch dan dibayar terpisah, sehingga pembayaran pesanan awal yang sudah
             // lunas tidak diutak-atik dan metode bayar tiap tambahan bisa berbeda.
-            $batch->subtotal = $batchSubtotal;
+            // Pajak batch dihitung dari subtotal batch itu sendiri memakai tarif pesanan,
+            // sehingga nota tambahan ikut menampilkan pajaknya.
+            $batchTaxPercentage = (float)($order->tax_percentage ?? 0);
+
+            if ($order->tax_inclusive) {
+                // Harga menu sudah termasuk pajak: tagihan batch = harga menu,
+                // pajaknya dikeluarkan dari dalam nilai itu.
+                $batchTax = $batchTaxPercentage > 0
+                    ? round($batchSubtotal * $batchTaxPercentage / (100 + $batchTaxPercentage))
+                    : 0;
+                $batch->subtotal = $batchSubtotal - $batchTax;
+                $batch->total = $batchSubtotal;
+            } else {
+                $batchTax = $batchTaxPercentage > 0
+                    ? round($batchSubtotal * $batchTaxPercentage / 100)
+                    : 0;
+                $batch->subtotal = $batchSubtotal;
+                $batch->total = $batchSubtotal + $batchTax;
+            }
+
+            $batch->tax_percentage = $batchTaxPercentage;
+            $batch->tax_amount = $batchTax;
+            $batch->tax_inclusive = (bool)$order->tax_inclusive;
             $batch->save();
+
+            $taxAmount = (float)$order->tax_amount + $batchTax;
+            $order->tax_amount = $taxAmount;
+
+            if ($order->tax_inclusive) {
+                $order->total = $gross;
+                $order->subtotal = $gross - $taxAmount;
+            } else {
+                $order->subtotal = $gross;
+                $order->total = $gross + $taxAmount;
+            }
+
+            $order->profit = (float)$order->subtotal - $cogs;
 
             $order->save();
             DB::commit();
@@ -971,20 +1064,22 @@ class OrderController extends Controller
             return response()->json(['message' => 'Tambahan ini sudah dibayar'], 422);
         }
 
-        $subtotal = (float) $batch->subtotal;
-        $paid = isset($validated['paid_amount']) ? (float) $validated['paid_amount'] : $subtotal;
+        // Tagihan batch adalah subtotal + pajak. Batch lama (sebelum fitur pajak)
+        // kolom total-nya 0, jadi jatuh kembali ke subtotal.
+        $billed = (float) $batch->total ?: (float) $batch->subtotal;
+        $paid = isset($validated['paid_amount']) ? (float) $validated['paid_amount'] : $billed;
 
         // Non-tunai selalu pas sejumlah tagihan; tunai boleh lebih (ada kembalian).
         if ($validated['payment_method'] !== 'cash') {
-            $paid = $subtotal;
-        } elseif ($paid < $subtotal) {
+            $paid = $billed;
+        } elseif ($paid < $billed) {
             return response()->json(['message' => 'Uang yang dibayar kurang dari tagihan tambahan'], 422);
         }
 
         $batch->payment_method = $validated['payment_method'];
         $batch->payment_status = 'paid';
         $batch->paid_amount = $paid;
-        $batch->change_amount = $paid - $subtotal;
+        $batch->change_amount = $paid - $billed;
         $batch->paid_at = now();
         $batch->save();
 
@@ -1030,13 +1125,23 @@ class OrderController extends Controller
 
         $orders = $query->get();
 
+        // total_sales = uang masuk (termasuk pajak). total_tax dipisah supaya laporan
+        // bisa menampilkan omzet bersih tanpa pajak, karena pajak adalah titipan
+        // untuk negara dan bukan pendapatan toko.
+        $totalSales = $orders->sum('total');
+        $totalTax = $orders->sum('tax_amount');
+        $netSales = $totalSales - $totalTax;
+
         $stats = [
             'total_orders' => $orders->count(),
-            'total_sales' => $orders->sum('total'),
+            'total_sales' => $totalSales,
+            'total_tax' => $totalTax,
+            'net_sales' => $netSales,
             'total_cogs' => $orders->sum('cogs'),
             'total_profit' => $orders->sum('profit'),
-            'profit_margin' => $orders->sum('total') > 0
-                ? ($orders->sum('profit') / $orders->sum('total')) * 100
+            // Margin dihitung dari omzet tanpa pajak agar tidak terdilusi oleh pajak.
+            'profit_margin' => $netSales > 0
+                ? ($orders->sum('profit') / $netSales) * 100
                 : 0,
         ];
 

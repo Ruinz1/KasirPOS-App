@@ -50,9 +50,12 @@ export function PayBatchDialog({
     }, [batch?.id]);
 
     const subtotal = Number(batch?.subtotal ?? 0);
+    const taxAmount = Number(batch?.tax_amount ?? 0);
+    // Batch lama (sebelum fitur pajak) kolom total-nya 0 -> jatuh kembali ke subtotal.
+    const billed = Number(batch?.total ?? 0) || subtotal;
     const entered = paidAmount ? parseFloat(paidAmount) : 0;
-    const change = method === "cash" ? Math.max(0, entered - subtotal) : 0;
-    const insufficient = method === "cash" && paidAmount !== "" && entered < subtotal;
+    const change = method === "cash" ? Math.max(0, entered - billed) : 0;
+    const insufficient = method === "cash" && paidAmount !== "" && entered < billed;
 
     const handlePay = async () => {
         if (!batch) return;
@@ -65,7 +68,7 @@ export function PayBatchDialog({
             });
             toast({
                 title: "✅ Tambahan Dibayar",
-                description: `${label} sebesar ${formatCurrency(subtotal)} lunas.`,
+                description: `${label} sebesar ${formatCurrency(billed)} lunas.`,
                 className: "bg-green-600 text-white border-none",
             });
             // Item tidak ikut terkirim di response pay — bawa dari batch yang sedang dibayar
@@ -110,7 +113,13 @@ export function PayBatchDialog({
                 </DialogHeader>
 
                 <div className="py-2">
-                    <p className="text-center text-3xl font-bold mb-4">{formatCurrency(subtotal)}</p>
+                    <p className="text-center text-3xl font-bold mb-1">{formatCurrency(billed)}</p>
+                    {taxAmount > 0 && (
+                        <p className="text-center text-xs text-muted-foreground mb-4">
+                            Subtotal {formatCurrency(subtotal)} + pajak {formatCurrency(taxAmount)}
+                        </p>
+                    )}
+                    {taxAmount <= 0 && <div className="mb-4" />}
 
                     <p className="text-sm text-muted-foreground mb-2">Metode Pembayaran</p>
                     <div className="grid grid-cols-3 gap-2 mb-4">
@@ -124,13 +133,13 @@ export function PayBatchDialog({
                             <p className="text-sm text-muted-foreground mb-1.5">Uang Dibayar</p>
                             <Input
                                 type="number"
-                                placeholder={`Kosongkan jika uang pas (${formatCurrency(subtotal)})`}
+                                placeholder={`Kosongkan jika uang pas (${formatCurrency(billed)})`}
                                 value={paidAmount}
                                 onChange={e => setPaidAmount(e.target.value)}
                             />
                             {insufficient && (
                                 <p className="text-xs text-destructive mt-1.5">
-                                    Uang kurang {formatCurrency(subtotal - entered)}
+                                    Uang kurang {formatCurrency(billed - entered)}
                                 </p>
                             )}
                             {change > 0 && (

@@ -36,6 +36,10 @@ class StoreController extends Controller
             'delivery_max_km' => 'nullable|integer|min:0',
             'parking_fee_motor' => 'nullable|integer|min:0',
             'parking_fee_mobil' => 'nullable|integer|min:0',
+            'tax_enabled' => 'nullable|boolean',
+            'tax_percentage' => 'nullable|numeric|min:0|max:100',
+            'tax_name' => 'nullable|string|max:50',
+            'tax_inclusive' => 'nullable|boolean',
         ]);
 
         $user = $request->user();
@@ -61,6 +65,10 @@ class StoreController extends Controller
             'delivery_max_km' => $request->delivery_max_km,
             'parking_fee_motor' => $request->parking_fee_motor ?? 2000,
             'parking_fee_mobil' => $request->parking_fee_mobil ?? 3000,
+            'tax_enabled' => $request->boolean('tax_enabled'),
+            'tax_percentage' => $request->tax_percentage ?? 0,
+            'tax_name' => $request->tax_name ?: 'Pajak',
+            'tax_inclusive' => $request->boolean('tax_inclusive'),
         ]);
 
         $user->store_id = $store->id;
@@ -98,6 +106,10 @@ class StoreController extends Controller
             'queue_enabled' => 'nullable|boolean',
             'parking_checkout_enabled' => 'nullable|boolean',
             'daily_target' => 'nullable|integer|min:0',
+            'tax_enabled' => 'nullable|boolean',
+            'tax_percentage' => 'nullable|numeric|min:0|max:100',
+            'tax_name' => 'nullable|string|max:50',
+            'tax_inclusive' => 'nullable|boolean',
         ]);
 
         $data = $request->only(
@@ -107,6 +119,19 @@ class StoreController extends Controller
             'parking_fee_motor', 'parking_fee_mobil',
             'daily_target'
         );
+
+        if ($request->has('tax_percentage')) {
+            $data['tax_percentage'] = (float)$request->tax_percentage;
+        }
+        if ($request->has('tax_name')) {
+            $data['tax_name'] = $request->tax_name ?: 'Pajak';
+        }
+        if ($request->has('tax_enabled')) {
+            $data['tax_enabled'] = $request->boolean('tax_enabled');
+        }
+        if ($request->has('tax_inclusive')) {
+            $data['tax_inclusive'] = $request->boolean('tax_inclusive');
+        }
 
         if ($request->has('queue_enabled')) {
             $data['queue_enabled'] = $request->boolean('queue_enabled');

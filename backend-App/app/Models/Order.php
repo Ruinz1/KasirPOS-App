@@ -20,6 +20,10 @@ class Order extends Model
         'points_earned',
         'points_redeemed',
         'total',
+        'subtotal',
+        'tax_percentage',
+        'tax_amount',
+        'tax_inclusive',
         'cogs',
         'profit',
         'payment_method',
@@ -52,6 +56,10 @@ class Order extends Model
 
     protected $casts = [
         'payment_proof' => 'array',
+        'subtotal' => 'float',
+        'tax_percentage' => 'float',
+        'tax_amount' => 'float',
+        'tax_inclusive' => 'boolean',
         'delivery_fee' => 'integer',
         'customer_latitude' => 'float',
         'customer_longitude' => 'float',
@@ -112,20 +120,87 @@ class Order extends Model
      */
     public function calculateTotals(): void
     {
-        $total = 0;
+        $itemsTotal = 0;
         $cogs = 0;
 
         foreach ($this->items as $item) {
-            $total += $item->price * $item->quantity;
-            
+            $itemsTotal += $item->price * $item->quantity;
+
             $menuItem = $item->menuItem;
             if ($menuItem) {
                 $cogs += $menuItem->calculateCOGS() * $item->quantity;
             }
         }
 
-        $this->total = $total;
+        // Ongkir kena pajak juga, jadi ikut masuk dasar pengenaan pajak.
+        $gross = $itemsTotal + (float)($this->delivery_fee ?? 0);
+
+        if ($this->tax_inclusive) {
+            // Harga menu SUDAH termasuk pajak: yang ditagih sama dengan harga menu,
+            // pajaknya dikeluarkan dari dalam harga tersebut.
+            $taxAmount = $this->extractTaxFrom($gross);
+            $this->tax_amount = $taxAmount;
+            $this->subtotal = $gross - $taxAmount;
+            $this->total = $gross;
+        } else {
+            // Harga menu belum termasuk pajak: pajak ditambahkan di atas harga.
+            $taxAmount = $this->computeTaxOn($gross);
+            $this->tax_amount = $taxAmount;
+            $this->subtotal = $gross;
+            $this->total = $gross + $taxAmount;
+        }
+
         $this->cogs = $cogs;
-        $this->profit = $total - $cogs;
+        // Pajak adalah titipan untuk negara, bukan pendapatan toko, jadi laba
+        // dihitung dari nilai sebelum pajak.
+        $this->profit = (float)$this->subtotal - $cogs;
+    }
+
+    /**
+     * Keluarkan pajak yang sudah terkandung di dalam sebuah harga (mode inclusive).
+     * Memakai tarif yang tersimpan di pesanan ini bila ada.
+     */
+    public function extractTaxFrom(float $grossAmount): float
+    {
+        $percentage = (float)($this->tax_percentage ?? 0);
+
+        if ($percentage <= 0) {
+            $store = $this->store;
+            if (!$store) {
+                return 0.0;
+            }
+            $percentage = $store->effectiveTaxPercentage();
+            $this->tax_percentage = $percentage;
+        }
+
+        if ($percentage <= 0 || $grossAmount <= 0) {
+            return 0.0;
+        }
+
+        return round($grossAmount * $percentage / (100 + $percentage));
+    }
+
+    /**
+     * Hitung pajak memakai tarif yang tersimpan di pesanan ini bila ada
+     * (snapshot saat transaksi), kalau belum ada pakai tarif toko saat ini.
+     */
+    public function computeTaxOn(float $subtotal): float
+    {
+        $percentage = (float)($this->tax_percentage ?? 0);
+
+        if ($percentage <= 0) {
+            $store = $this->store;
+            if (!$store) {
+                return 0.0;
+            }
+            $percentage = $store->effectiveTaxPercentage();
+            $this->tax_percentage = $percentage;
+        }
+
+        if ($percentage <= 0 || $subtotal <= 0) {
+            return 0.0;
+        }
+
+        return round($subtotal * $percentage / 100);
     }
 }

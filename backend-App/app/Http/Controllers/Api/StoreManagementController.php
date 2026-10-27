@@ -42,7 +42,18 @@ class StoreManagementController extends Controller
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'location' => 'nullable|string|max:500',
+            'tax_enabled' => 'nullable|boolean',
+            'tax_percentage' => 'nullable|numeric|min:0|max:100',
+            'tax_name' => 'nullable|string|max:50',
         ]);
+
+        // Admin boleh mengatur pajak tiap toko dari halaman manajemen toko.
+        if ($request->has('tax_enabled')) {
+            $validated['tax_enabled'] = $request->boolean('tax_enabled');
+        }
+        if ($request->has('tax_name')) {
+            $validated['tax_name'] = $request->tax_name ?: 'Pajak';
+        }
 
         $store->update($validated);
 

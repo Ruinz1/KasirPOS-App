@@ -33,7 +33,12 @@ export interface BatchReceiptData {
  * Dicetak lewat #receipt-print (58mm thermal), sama seperti nota kasir.
  */
 export function BatchReceipt({ data }: { data: BatchReceiptData | null }) {
-    const [storeInfo, setStoreInfo] = useState<{ name: string; address: string; image?: string }>({
+    const [storeInfo, setStoreInfo] = useState<{
+        name: string;
+        address: string;
+        image?: string;
+        tax_name?: string;
+    }>({
         name: "KedaiPOS",
         address: "",
     });
@@ -45,6 +50,7 @@ export function BatchReceipt({ data }: { data: BatchReceiptData | null }) {
                     name: res.data.name || "KedaiPOS",
                     address: res.data.location || "",
                     image: res.data.image,
+                    tax_name: res.data.tax_name || "Pajak",
                 })
             )
             .catch(() => {});
@@ -55,6 +61,13 @@ export function BatchReceipt({ data }: { data: BatchReceiptData | null }) {
     const { batch, label, dailyNumber, customerName, orderType, tableNumber, cashierName } = data;
     const items: QueueItem[] = batch.items ?? [];
     const subtotal = Number(batch.subtotal ?? 0);
+    const taxAmount = Number(batch.tax_amount ?? 0);
+    const taxPct = Number(batch.tax_percentage ?? 0);
+    // Batch lama (sebelum fitur pajak) kolom total-nya 0 -> jatuh kembali ke subtotal.
+    const billed = Number(batch.total ?? 0) || subtotal;
+    const taxLabel = taxPct > 0
+        ? `${storeInfo.tax_name || "Pajak"} ${parseFloat(taxPct.toFixed(2))}%`
+        : (storeInfo.tax_name || "Pajak");
     const paid = Number(batch.paid_amount ?? 0);
     const change = Number(batch.change_amount ?? 0);
 
@@ -156,9 +169,21 @@ export function BatchReceipt({ data }: { data: BatchReceiptData | null }) {
 
                 {/* Total & pembayaran tambahan ini saja */}
                 <div className="mb-2 text-[10px] space-y-0.5 border-t border-dashed border-black pt-1">
+                    {taxAmount > 0 && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Subtotal</span>
+                                <span>{formatCurrency(subtotal)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>{taxLabel}</span>
+                                <span>{formatCurrency(taxAmount)}</span>
+                            </div>
+                        </>
+                    )}
                     <div className="flex justify-between font-bold text-xs">
                         <span>TOTAL TAMBAHAN</span>
-                        <span>{formatCurrency(subtotal)}</span>
+                        <span>{formatCurrency(billed)}</span>
                     </div>
                     {batch.payment_status === "paid" && (
                         <>

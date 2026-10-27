@@ -13,6 +13,7 @@ import { StatCardsSkeleton, CardGridSkeleton } from "@/components/skeletons";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
 import { PayBatchDialog } from "@/components/PayBatchDialog";
 import { BatchReceipt, BatchReceiptData } from "@/components/BatchReceipt";
+import { KitchenGroupedItems } from "@/components/queue/KitchenGroupedItems";
 import {
     Dialog,
     DialogContent,
@@ -146,7 +147,7 @@ const DrinkOrderCard = ({
                             : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 text-amber-800 dark:text-amber-300"
                     }`}>
                         <div>
-                            <span className="font-bold">{formatRupiah(Number(card.batch.subtotal))}</span>
+                            <span className="font-bold">{formatRupiah(Number(card.batch.total ?? 0) || Number(card.batch.subtotal))}</span>
                             <div className="text-[10px] opacity-90">
                                 {card.batch.payment_status === "paid"
                                     ? `Lunas · ${(card.batch.payment_method || "").toUpperCase()}`
@@ -283,7 +284,10 @@ const DrinkOrderCard = ({
                         {isReactivated && (
                             <p className="text-[9px] text-red-600 uppercase font-bold tracking-wider mb-1">↓ Buat Sekarang:</p>
                         )}
-                        {drinkItems.map(item => (
+                        {/* Dikelompokkan per kategori dapur bila menu sudah dikategorikan */}
+                        <KitchenGroupedItems
+                            items={drinkItems}
+                            renderItem={item => (
                             <div key={item.id} className={`text-xs leading-relaxed ${
                                 isReactivated
                                     ? "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-2 py-1.5"
@@ -302,7 +306,8 @@ const DrinkOrderCard = ({
                                 </div>
                                 {item.note && <p className="text-[10px] text-muted-foreground italic pl-4 leading-tight">↳ {item.note}</p>}
                             </div>
-                        ))}
+                            )}
+                        />
                     </div>
 
                     {/* Action Button */}

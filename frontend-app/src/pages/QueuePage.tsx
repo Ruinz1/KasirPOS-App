@@ -12,6 +12,7 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { StatCardsSkeleton, CardGridSkeleton } from "@/components/skeletons";
 import { EditQueueOrderDialog } from "@/components/EditQueueOrderDialog";
 import { PayBatchDialog } from "@/components/PayBatchDialog";
+import { KitchenGroupedItems } from "@/components/queue/KitchenGroupedItems";
 import { BatchReceipt, BatchReceiptData } from "@/components/BatchReceipt";
 import { Link } from "react-router-dom";
 import {
@@ -712,7 +713,7 @@ const QueuePage = () => {
                                                     {isBatchCard && card.batch && (
                                                         <div className={`text-xs p-2 rounded mb-3 border flex items-center justify-between gap-2 ${card.batch.payment_status === "paid" ? "bg-green-50 dark:bg-green-950/20 border-green-300 text-green-700 dark:text-green-300" : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 text-amber-800 dark:text-amber-300"}`}>
                                                             <div>
-                                                                <span className="font-bold">{formatRupiah(Number(card.batch.subtotal))}</span>
+                                                                <span className="font-bold">{formatRupiah(Number(card.batch.total ?? 0) || Number(card.batch.subtotal))}</span>
                                                                 <div className="text-[10px] opacity-90">{card.batch.payment_status === "paid" ? `Lunas · ${(card.batch.payment_method || "").toUpperCase()}` : "Belum dibayar"}</div>
                                                             </div>
                                                             {card.batch.payment_status !== "paid" && (
@@ -752,7 +753,11 @@ const QueuePage = () => {
                                                             {foodHold && <span className="text-[10px] bg-white/20 px-1 rounded">⏸ Ditahan</span>}
                                                         </div>
                                                         <div className="px-3 py-2 space-y-1 max-h-36 overflow-y-auto">
-                                                            {foodItems.map(item => (
+                                                            {/* Dikelompokkan per kategori dapur bila menu sudah dikategorikan */}
+                                                            <KitchenGroupedItems
+                                                                compact
+                                                                items={foodItems}
+                                                                renderItem={item => (
                                                                 <div key={item.id} className={`text-xs ${item.is_addon ? 'bg-purple-100 dark:bg-purple-900/40 p-1 rounded border border-purple-200 dark:border-purple-800' : ''}`}>
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
                                                                     {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
@@ -760,7 +765,8 @@ const QueuePage = () => {
                                                                     {!isBatchCard && item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
                                                                     {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
                                                                 </div>
-                                                            ))}
+                                                                )}
+                                                            />
                                                         </div>
                                                         <div className="px-3 pb-2">
                                                             {foodCompleted ? (
@@ -862,7 +868,7 @@ const QueuePage = () => {
                                                     {isBatchCard && card.batch && (
                                                         <div className={`text-xs p-2 rounded mb-3 border flex items-center justify-between gap-2 ${card.batch.payment_status === "paid" ? "bg-green-50 dark:bg-green-950/20 border-green-300 text-green-700 dark:text-green-300" : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 text-amber-800 dark:text-amber-300"}`}>
                                                             <div>
-                                                                <span className="font-bold">{formatRupiah(Number(card.batch.subtotal))}</span>
+                                                                <span className="font-bold">{formatRupiah(Number(card.batch.total ?? 0) || Number(card.batch.subtotal))}</span>
                                                                 <div className="text-[10px] opacity-90">{card.batch.payment_status === "paid" ? `Lunas · ${(card.batch.payment_method || "").toUpperCase()}` : "Belum dibayar"}</div>
                                                             </div>
                                                             {card.batch.payment_status !== "paid" && (
@@ -902,7 +908,11 @@ const QueuePage = () => {
                                                             {drinkHold && <span className="text-[10px] bg-white/20 px-1 rounded">⏸ Ditahan</span>}
                                                         </div>
                                                         <div className="px-3 py-2 space-y-1 max-h-36 overflow-y-auto">
-                                                            {drinkItems.map(item => (
+                                                            {/* Dikelompokkan per kategori dapur bila menu sudah dikategorikan */}
+                                                            <KitchenGroupedItems
+                                                                compact
+                                                                items={drinkItems}
+                                                                renderItem={item => (
                                                                 <div key={item.id} className={`text-xs ${item.is_addon ? 'bg-purple-100 dark:bg-purple-900/40 p-1 rounded border border-purple-200 dark:border-purple-800' : ''}`}>
                                                                     <span className="font-bold">{item.quantity}x</span> {item.menu_item?.name || 'Item Dihapus'}
                                                                     {isBonusItemNote(item.note) && <span className="text-green-700 bg-green-100 border border-green-300 rounded px-1 text-[10px] font-bold ml-1">🎁 BONUS</span>}
@@ -910,7 +920,8 @@ const QueuePage = () => {
                                                                     {!isBatchCard && item.is_addon && <span className="text-purple-600 dark:text-purple-400 font-bold ml-1 text-[10px] animate-pulse">● BARU</span>}
                                                                     {item.note && <div className="text-[10px] text-muted-foreground italic pl-4 mt-0.5">- {formatItemNote(item.note, item.menu_item?.name)}</div>}
                                                                 </div>
-                                                            ))}
+                                                                )}
+                                                            />
                                                         </div>
                                                         <div className="px-3 pb-2">
                                                             {drinkCompleted ? (

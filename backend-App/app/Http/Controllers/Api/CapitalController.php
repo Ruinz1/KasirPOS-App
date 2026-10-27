@@ -176,7 +176,11 @@ class CapitalController extends Controller
             $userQuery->where('store_id', $storeId);
         }
         
-        $totalRevenue = $orderQuery->sum('total');
+        // Pajak yang dipungut adalah titipan untuk negara, bukan pendapatan toko,
+        // jadi omzet untuk analisa laba/rugi dihitung tanpa pajak.
+        $grossRevenue = $orderQuery->sum('total');
+        $totalTax = $orderQuery->sum('tax_amount');
+        $totalRevenue = $grossRevenue - $totalTax;
         $totalCOGS = $orderQuery->sum('cogs');
         
         // Calculate employee salaries (current month)
@@ -219,6 +223,8 @@ class CapitalController extends Controller
             ],
             'revenue' => [
                 'total_sales' => $totalRevenue,
+                'gross_sales' => $grossRevenue,
+                'tax_collected' => $totalTax,
             ],
             'expenses' => [
                 'cogs' => $totalCOGS,

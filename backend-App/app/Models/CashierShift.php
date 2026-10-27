@@ -102,13 +102,18 @@ class CashierShift extends Model
 
         // Tagihan tambahan dibayar terpisah dengan metodenya sendiri, jadi nilainya
         // dikeluarkan dari total order agar tidak terhitung dua kali di metode induk.
+        // Yang dikeluarkan harus nilai TERTAGIH batch (subtotal + pajak), sebab
+        // $order->total juga sudah termasuk pajak batch tersebut.
         $batches = OrderItemBatch::whereIn('order_id', $orders->pluck('id'))->get();
-        $batchSubtotalByOrder = $batches->groupBy('order_id')->map(fn ($rows) => $rows->sum('subtotal'));
+        $batchBilled = fn ($batch) => (float) ($batch->total ?: $batch->subtotal);
+        $batchBilledByOrder = $batches->groupBy('order_id')->map(
+            fn ($rows) => $rows->sum($batchBilled)
+        );
         $orderBaseTotal = fn ($order) => (float) $order->total
-            - (float) ($batchSubtotalByOrder[$order->id] ?? 0);
+            - (float) ($batchBilledByOrder[$order->id] ?? 0);
 
         $paidBatches = $batches->where('payment_status', 'paid');
-        $batchSalesBy = fn ($method) => $paidBatches->where('payment_method', $method)->sum('subtotal');
+        $batchSalesBy = fn ($method) => $paidBatches->where('payment_method', $method)->sum($batchBilled);
 
         // Cash sales: orders paid with cash (primary payment method)
         $cashOrders = $orders->where('payment_method', 'cash');
@@ -136,7 +141,7 @@ class CashierShift extends Model
         // Paylater sales (payment_method is null or payment_status is pending)
         // Paylater: order induk belum dibayar + tagihan tambahan yang belum dibayar
         $paylaterSales = $orders->whereNull('payment_method')->sum($orderBaseTotal)
-            + $batches->where('payment_status', 'pending')->sum('subtotal');
+            + $batches->where('payment_status', 'pending')->sum($batchBilled);
 
         // Daily Shopping (belanja) expenses associated with this shift
         $shoppingExpenses = DailyShopping::where('cashier_shift_id', $this->id)
